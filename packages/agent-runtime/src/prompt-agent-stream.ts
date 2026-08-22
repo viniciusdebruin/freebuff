@@ -14,6 +14,9 @@ import type { Message } from '@codebuff/common/types/messages/codebuff-message'
 import type { OpenRouterProviderOptions } from '@codebuff/common/types/agent-template'
 import type { ToolSet } from 'ai'
 
+/** More patience for transient API congestion before ending an agent step. */
+const LOCAL_STREAM_MAX_RETRIES = 10
+
 export const getAgentStreamFromTemplate = (params: {
   agentId?: string
   apiKey: string
@@ -91,7 +94,7 @@ export const getAgentStreamFromTemplate = (params: {
     logger,
     localAgentTemplates,
     maxOutputTokens: undefined,
-    maxRetries: 3,
+    maxRetries: LOCAL_STREAM_MAX_RETRIES,
     messages,
     model,
     runId,

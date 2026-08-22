@@ -4,7 +4,10 @@ import { useCallback, useEffect, useState } from 'react'
 import { defineToolComponent } from './types'
 import { useTerminalDimensions } from '../../hooks/use-terminal-dimensions'
 import { useTheme } from '../../hooks/use-theme'
-import { getLatestFollowupToolCallId, useChatStore } from '../../state/chat-store'
+import {
+  getLatestFollowupToolCallId,
+  useChatStore,
+} from '../../state/chat-store'
 import { useFreebuffSessionStore } from '../../state/freebuff-session-store'
 import { IS_FREEBUFF } from '../../utils/constants'
 import { Button } from '../button'
@@ -17,6 +20,8 @@ const MIN_LABEL_COLUMN_WIDTH = 12
 const MAX_LABEL_COLUMN_WIDTH = 60
 /** Minimum terminal width to show the prompt description on hover */
 const MIN_WIDTH_FOR_DESCRIPTION = 80
+/** Automatically choose all followups when the user leaves them untouched. */
+const AUTO_ACCEPT_FOLLOWUPS_MS = 60_000
 
 interface FollowupLineProps {
   followup: SuggestedFollowup
@@ -123,7 +128,8 @@ const FollowupLine = ({
           <box style={{ flexGrow: 1 }}>
             <text style={{ wrapMode: 'none' }}>
               <span fg={theme.muted} attributes={TextAttributes.ITALIC}>
-                {paddingSpaces}{truncatedPrompt}
+                {paddingSpaces}
+                {truncatedPrompt}
               </span>
             </text>
           </box>
@@ -280,6 +286,56 @@ const SuggestFollowupsItem = ({
 
   // Track which item is hovered (for passing to children)
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
+  const [autoAcceptSeconds, setAutoAcceptSeconds] = useState<number | null>(
+    null,
+  )
+  const followupSignature = followups
+    .map((followup) => `${followup.label ?? ''}\u0000${followup.prompt}`)
+    .join('\u0001')
+
+  useEffect(() => {
+    if (
+      !isActive ||
+      followups.length !== 3 ||
+      clickedIndices.size > 0 ||
+      isFreebuffSessionOver
+    ) {
+      setAutoAcceptSeconds(null)
+      return
+    }
+
+    setAutoAcceptSeconds(AUTO_ACCEPT_FOLLOWUPS_MS / 1000)
+
+    const countdown = setInterval(() => {
+      setAutoAcceptSeconds((seconds) =>
+        seconds == null ? seconds : Math.max(0, seconds - 1),
+      )
+    }, 1000)
+
+    const autoAccept = setTimeout(() => {
+      // The effect is cancelled as soon as the user clicks a suggestion or
+      // this tool is no longer the active followup set.
+      for (const [index, followup] of followups.entries()) {
+        globalThis.dispatchEvent(
+          new CustomEvent('codebuff:send-followup', {
+            detail: { prompt: followup.prompt, index, toolCallId },
+          }),
+        )
+      }
+      setAutoAcceptSeconds(null)
+    }, AUTO_ACCEPT_FOLLOWUPS_MS)
+
+    return () => {
+      clearInterval(countdown)
+      clearTimeout(autoAccept)
+    }
+  }, [
+    clickedIndices.size,
+    followupSignature,
+    isActive,
+    isFreebuffSessionOver,
+    toolCallId,
+  ])
 
   // For past messages, show collapsed toggle view
   if (!isActive) {
@@ -300,6 +356,11 @@ const SuggestFollowupsItem = ({
   return (
     <box style={{ flexDirection: 'column' }}>
       <text style={{ fg: theme.muted }}>Suggested followups:</text>
+      {autoAcceptSeconds != null && (
+        <text style={{ fg: theme.muted }}>
+          Auto-selecting all 3 in {autoAcceptSeconds}s (click one to cancel)
+        </text>
+      )}
       <box style={{ flexDirection: 'column' }}>
         {followups.map((followup, index) => (
           <FollowupLine

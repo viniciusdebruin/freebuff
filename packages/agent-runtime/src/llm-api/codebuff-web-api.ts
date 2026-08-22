@@ -5,8 +5,12 @@ import type { JSONObject } from '@codebuff/common/types/json'
 import type { Logger } from '@codebuff/common/types/contracts/logger'
 
 const FETCH_TIMEOUT_MS = 30_000
-const MAX_RETRIES = 3
+// Keep retrying transient capacity/network failures long enough for a busy
+// local session to recover instead of surfacing an avoidable terminal error.
+const MAX_RETRIES = 10
 const RETRY_BASE_DELAY_MS = 1000
+const RETRY_MAX_DELAY_MS = 30_000
+const RETRY_JITTER_RATIO = 0.25
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
 
 interface CodebuffWebApiEnv {
@@ -36,11 +40,34 @@ const getNumberField = (value: unknown, key: string): number | undefined => {
   return typeof field === 'number' ? field : undefined
 }
 
+const getRetryAfterMs = (headers: Headers): number | undefined => {
+  const value = headers.get('retry-after')
+  if (!value) return undefined
+
+  const seconds = Number(value)
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, RETRY_MAX_DELAY_MS)
+  }
+
+  const timestamp = Date.parse(value)
+  if (!Number.isFinite(timestamp)) return undefined
+  return Math.min(Math.max(0, timestamp - Date.now()), RETRY_MAX_DELAY_MS)
+}
+
+const getRetryDelayMs = (attempt: number, retryAfterMs?: number): number => {
+  if (retryAfterMs !== undefined) return retryAfterMs
+
+  const exponentialDelay = Math.min(
+    RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
+    RETRY_MAX_DELAY_MS,
+  )
+  const jitter = 1 + (Math.random() * 2 - 1) * RETRY_JITTER_RATIO
+  return Math.round(exponentialDelay * jitter)
+}
+
 const callCodebuffV1 = async (params: {
   endpoint:
-    | '/api/v1/web-search'
-    | '/api/v1/docs-search'
-    | '/api/v1/gravity-index'
+    '/api/v1/web-search' | '/api/v1/docs-search' | '/api/v1/gravity-index'
   payload: unknown
   fetch: typeof globalThis.fetch
   logger: Logger
@@ -88,7 +115,7 @@ const callCodebuffV1 = async (params: {
 
         // Retry on transient errors
         if (RETRYABLE_STATUS_CODES.has(res.status) && attempt < MAX_RETRIES) {
-          const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)
+          const delay = getRetryDelayMs(attempt, getRetryAfterMs(res.headers))
           logger.warn(
             {
               url,
@@ -124,7 +151,7 @@ const callCodebuffV1 = async (params: {
 
       // Retry on network errors
       if (attempt < MAX_RETRIES) {
-        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)
+        const delay = getRetryDelayMs(attempt)
         logger.warn(
           {
             error:

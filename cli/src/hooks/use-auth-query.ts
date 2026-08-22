@@ -19,6 +19,7 @@ import {
   type User,
 } from '../utils/auth'
 import { resetCodebuffClient } from '../utils/codebuff-client'
+import { IS_FREEBUFF } from '../utils/constants'
 import { logger as defaultLogger, loggerContext } from '../utils/logger'
 
 import type { GetUserInfoFromApiKeyFn } from '@codebuff/common/types/contracts/database'
@@ -138,7 +139,11 @@ export function useAuthQuery(deps: UseAuthQueryDeps = {}) {
   return useQuery({
     queryKey: authQueryKeys.validation(apiKey),
     queryFn: () => validateApiKey({ apiKey, getUserInfoFromApiKey, logger }),
-    enabled: !!apiKey,
+    // Freebuff login tokens are issued by the Freebuff auth flow and are not
+    // valid on Codebuff's /api/v1/me endpoint. Freebuff validates the token
+    // when the free session is opened, so avoid falsely rejecting a valid
+    // Freebuff login here and sending the user back into the login loop.
+    enabled: !!apiKey && !IS_FREEBUFF,
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes
     // Retry only for retryable network errors (5xx, timeouts, etc.)
