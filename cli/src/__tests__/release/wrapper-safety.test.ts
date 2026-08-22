@@ -166,6 +166,34 @@ describe('shared release launcher safety', () => {
   const launcherPath = join(repoRoot, 'cli/release-core/launcher.js')
   const { createLauncher } = require(launcherPath)
 
+  test('selects the Linux baseline binary on CPUs without AVX2', () => {
+    if (process.platform !== 'linux' || process.arch !== 'x64') return
+
+    const cpuInfo = readFileSync('/proc/cpuinfo', 'utf8')
+    if (/\bavx2\b/i.test(cpuInfo)) return
+
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'launcher-baseline-'))
+    try {
+      const launcher = createLauncher({
+        packageName: 'baseline-test',
+        displayName: 'Baseline Test',
+        configDir: fixtureRoot,
+      })
+
+      expect(launcher.__testing.getDefaultTargetKey()).toBe(
+        'linux-x64-baseline',
+      )
+      expect(
+        launcher.__testing.isTargetAllowedForThisMachine('linux-x64-baseline'),
+      ).toBe(true)
+      expect(
+        launcher.__testing.isTargetAllowedForThisMachine('linux-x64'),
+      ).toBe(false)
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true })
+    }
+  })
+
   test('stages an update before stopping the running process', () => {
     const source = readFileSync(launcherPath, 'utf8')
     const updateFunction = source.slice(
