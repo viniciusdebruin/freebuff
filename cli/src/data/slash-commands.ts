@@ -45,6 +45,10 @@ const FREEBUFF_ONLY_COMMAND_IDS = new Set([
   'plan',
   'end-session',
   'dashboard',
+  'toolkit',
+  'repo-map',
+  'profiles',
+  'background',
 ])
 
 const ALL_SLASH_COMMANDS: SlashCommand[] = [
@@ -60,6 +64,30 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
     label: 'diagnostics',
     description: 'Show local CLI resource usage and terminal tool process IDs',
     aliases: ['diag', 'processes'],
+  },
+  {
+    id: 'toolkit',
+    label: 'toolkit',
+    description: 'Use the Freebuff agent toolkit: maps, profiles, routing, and background sessions',
+    aliases: ['agent'],
+  },
+  {
+    id: 'repo-map',
+    label: 'repo-map',
+    description: 'Build a token-budgeted map of the repository and its key symbols',
+    aliases: ['map', 'context-map'],
+  },
+  {
+    id: 'profiles',
+    label: 'profiles',
+    description: 'Manage provider profiles and task routing without storing API keys',
+    aliases: ['profile', 'route'],
+  },
+  {
+    id: 'background',
+    label: 'background',
+    description: 'Start, inspect, stop, and read logs from durable background sessions',
+    aliases: ['sessions'],
   },
   {
     id: 'ads:enable',

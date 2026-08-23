@@ -12,6 +12,7 @@ import {
 import { buildInterviewPrompt, buildPlanPrompt, buildReviewPromptFromArgs } from './prompt-builders'
 import { runBashCommand } from './router'
 import { handleUsageCommand } from './usage'
+import { handleFreebuffToolkitCommand } from './freebuff-toolkit'
 import { returnToFreebuffLanding } from '../hooks/use-freebuff-session'
 import { useThemeStore } from '../hooks/use-theme'
 import { LOGIN_WEBSITE_URL, WEBSITE_URL } from '../login/constants'
@@ -183,6 +184,10 @@ const FREEBUFF_ONLY_COMMANDS = new Set([
   'plan',
   'end-session',
   'dashboard',
+  'toolkit',
+  'repo-map',
+  'profiles',
+  'background',
 ])
 
 const ALL_COMMANDS: CommandDefinition[] = [
@@ -223,6 +228,26 @@ const ALL_COMMANDS: CommandDefinition[] = [
       params.saveToHistory(params.inputValue.trim())
       clearInput(params)
     },
+  }),
+  defineCommandWithArgs({
+    name: 'toolkit',
+    aliases: ['agent'],
+    handler: (params, args) => handleFreebuffToolkitCommand(params, args),
+  }),
+  defineCommandWithArgs({
+    name: 'repo-map',
+    aliases: ['map', 'context-map'],
+    handler: (params, args) => handleFreebuffToolkitCommand(params, `map ${args}`),
+  }),
+  defineCommandWithArgs({
+    name: 'profiles',
+    aliases: ['profile', 'route'],
+    handler: (params, args) => handleFreebuffToolkitCommand(params, `profiles ${args}`),
+  }),
+  defineCommandWithArgs({
+    name: 'background',
+    aliases: ['sessions'],
+    handler: (params, args) => handleFreebuffToolkitCommand(params, `background ${args}`),
   }),
   defineCommand({
     name: 'copy',

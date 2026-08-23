@@ -1,8 +1,8 @@
 # Freebuff Agent Toolkit
 
 This is an isolated, dependency-free contribution for Freebuff. It turns four
-useful agent behaviors into small, testable modules that can be integrated into
-the CLI without coupling them to the current command router:
+useful agent behaviors into small, testable modules integrated into the Freebuff
+CLI without coupling the core runtime to provider-specific code:
 
 - named provider profiles that keep credentials in environment variables;
 - durable background sessions with private metadata and bounded logs;
@@ -23,10 +23,20 @@ bun test
 bun run typecheck
 ```
 
-The modules are intentionally independent. The planned CLI integration points
-are the existing provider/session command surfaces, so this folder can be
-reviewed or cherry-picked as one unit before wiring new commands into the main
-interactive loop.
+The CLI exposes the modules through `/toolkit`, `/repo-map`, `/profiles`, and
+`/background`. The integration keeps the modules independently testable while
+making the features available in the normal Freebuff session.
+
+Examples:
+
+```text
+/repo-map --tokens 3000 src cli
+/profiles add coding https://your-endpoint/v1 your-model FREEBUFF_CODING_KEY 80
+/profiles route implementation coding
+/background start bun run dev
+```
+
+Background commands are started directly with `spawn`, never through a shell.
 
 ## State layout
 
