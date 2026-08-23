@@ -7,7 +7,7 @@ import {
 import { getRateLimitsByModel } from '@codebuff/common/types/freebuff-session'
 import { TextAttributes } from '@opentui/core'
 import { useKeyboard } from '@opentui/react'
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Button } from './button'
 import {
@@ -17,7 +17,12 @@ import {
 import { useTheme } from '../hooks/use-theme'
 import { useFreebuffModelStore } from '../state/freebuff-model-store'
 import { useFreebuffSessionStore } from '../state/freebuff-session-store'
+import { useChatStore } from '../state/chat-store'
 import { formatSessionUnits } from '../utils/format-session-units'
+import {
+  FREEBUFF_SETTINGS_CHANGED_EVENT,
+  getAutoStartNextSession,
+} from '../utils/settings'
 import { isPlainEnterKey } from '../utils/terminal-enter-detection'
 import { BORDER_CHARS } from '../utils/ui-constants'
 
@@ -42,6 +47,34 @@ export const SessionEndedBanner: React.FC<SessionEndedBannerProps> = ({
   const [pendingAction, setPendingAction] = useState<
     'landing' | 'same-chat' | null
   >(null)
+  const [autoStartNextSession, setAutoStartNextSession] = useState(
+    getAutoStartNextSession,
+  )
+  const [observedActiveWork, setObservedActiveWork] = useState(false)
+  const autoAttemptedRef = useRef(false)
+  const hasPendingFollowups = useChatStore((state) => {
+    const followups = state.suggestedFollowups
+    return Boolean(
+      followups && followups.clickedIndices.size < followups.followups.length,
+    )
+  })
+
+  useEffect(() => {
+    if (isStreaming) setObservedActiveWork(true)
+  }, [isStreaming])
+
+  useEffect(() => {
+    const refreshSettings = () => setAutoStartNextSession(getAutoStartNextSession())
+    globalThis.addEventListener(
+      FREEBUFF_SETTINGS_CHANGED_EVENT,
+      refreshSettings,
+    )
+    return () =>
+      globalThis.removeEventListener(
+        FREEBUFF_SETTINGS_CHANGED_EVENT,
+        refreshSettings,
+      )
+  }, [])
 
   // All premium models share one daily pool; the server replicates the same
   // snapshot under each premium model id, so the first entry has the right
@@ -114,6 +147,32 @@ export const SessionEndedBanner: React.FC<SessionEndedBannerProps> = ({
     // intact so the next prompt continues the same conversation.
     refreshFreebuffSession().catch(() => setPendingAction(null))
   }, [canRestart, continueOnFallback])
+
+  useEffect(() => {
+    const unfinishedWork = observedActiveWork || hasPendingFollowups
+    if (
+      !autoStartNextSession ||
+      isStreaming ||
+      pendingAction !== null ||
+      autoAttemptedRef.current ||
+      !unfinishedWork
+    ) {
+      return
+    }
+
+    autoAttemptedRef.current = true
+    const timer = setTimeout(() => {
+      startSameChatSession()
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [
+    autoStartNextSession,
+    hasPendingFollowups,
+    isStreaming,
+    observedActiveWork,
+    pendingAction,
+    startSameChatSession,
+  ])
 
   useKeyboard(
     useCallback(

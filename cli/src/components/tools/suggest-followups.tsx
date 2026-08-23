@@ -10,6 +10,11 @@ import {
 } from '../../state/chat-store'
 import { useFreebuffSessionStore } from '../../state/freebuff-session-store'
 import { IS_FREEBUFF } from '../../utils/constants'
+import {
+  FREEBUFF_SETTINGS_CHANGED_EVENT,
+  getAutoAcceptFollowups,
+  getAutoAcceptFollowupsDelaySeconds,
+} from '../../utils/settings'
 import { Button } from '../button'
 
 import type { ToolRenderConfig } from './types'
@@ -20,9 +25,6 @@ const MIN_LABEL_COLUMN_WIDTH = 12
 const MAX_LABEL_COLUMN_WIDTH = 60
 /** Minimum terminal width to show the prompt description on hover */
 const MIN_WIDTH_FOR_DESCRIPTION = 80
-/** Automatically choose all followups when the user leaves them untouched. */
-const AUTO_ACCEPT_FOLLOWUPS_MS = 60_000
-
 interface FollowupLineProps {
   followup: SuggestedFollowup
   index: number
@@ -289,12 +291,35 @@ const SuggestFollowupsItem = ({
   const [autoAcceptSeconds, setAutoAcceptSeconds] = useState<number | null>(
     null,
   )
+  const [autoAcceptEnabled, setAutoAcceptEnabled] = useState(
+    getAutoAcceptFollowups,
+  )
+  const [autoAcceptDelaySeconds, setAutoAcceptDelaySeconds] = useState(
+    getAutoAcceptFollowupsDelaySeconds,
+  )
   const followupSignature = followups
     .map((followup) => `${followup.label ?? ''}\u0000${followup.prompt}`)
     .join('\u0001')
 
   useEffect(() => {
+    const refreshSettings = () => {
+      setAutoAcceptEnabled(getAutoAcceptFollowups())
+      setAutoAcceptDelaySeconds(getAutoAcceptFollowupsDelaySeconds())
+    }
+    globalThis.addEventListener(
+      FREEBUFF_SETTINGS_CHANGED_EVENT,
+      refreshSettings,
+    )
+    return () =>
+      globalThis.removeEventListener(
+        FREEBUFF_SETTINGS_CHANGED_EVENT,
+        refreshSettings,
+      )
+  }, [])
+
+  useEffect(() => {
     if (
+      !autoAcceptEnabled ||
       !isActive ||
       followups.length !== 3 ||
       clickedIndices.size > 0 ||
@@ -304,7 +329,8 @@ const SuggestFollowupsItem = ({
       return
     }
 
-    setAutoAcceptSeconds(AUTO_ACCEPT_FOLLOWUPS_MS / 1000)
+    const autoAcceptMs = autoAcceptDelaySeconds * 1000
+    setAutoAcceptSeconds(autoAcceptDelaySeconds)
 
     const countdown = setInterval(() => {
       setAutoAcceptSeconds((seconds) =>
@@ -323,7 +349,7 @@ const SuggestFollowupsItem = ({
         )
       }
       setAutoAcceptSeconds(null)
-    }, AUTO_ACCEPT_FOLLOWUPS_MS)
+    }, autoAcceptMs)
 
     return () => {
       clearInterval(countdown)
@@ -334,6 +360,8 @@ const SuggestFollowupsItem = ({
     followupSignature,
     isActive,
     isFreebuffSessionOver,
+    autoAcceptDelaySeconds,
+    autoAcceptEnabled,
     toolCallId,
   ])
 

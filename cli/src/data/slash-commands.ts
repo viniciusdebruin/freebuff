@@ -49,6 +49,7 @@ const FREEBUFF_ONLY_COMMAND_IDS = new Set([
   'repo-map',
   'profiles',
   'background',
+  'config',
 ])
 
 const ALL_SLASH_COMMANDS: SlashCommand[] = [
@@ -88,6 +89,12 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
     label: 'background',
     description: 'Start, inspect, stop, and read logs from durable background sessions',
     aliases: ['sessions'],
+  },
+  {
+    id: 'config',
+    label: 'config',
+    description: 'Configure automatic session continuation and three-suggestion acceptance',
+    aliases: ['settings'],
   },
   {
     id: 'ads:enable',

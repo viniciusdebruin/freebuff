@@ -13,6 +13,7 @@ import { buildInterviewPrompt, buildPlanPrompt, buildReviewPromptFromArgs } from
 import { runBashCommand } from './router'
 import { handleUsageCommand } from './usage'
 import { handleFreebuffToolkitCommand } from './freebuff-toolkit'
+import { handleConfigCommand } from './config'
 import { returnToFreebuffLanding } from '../hooks/use-freebuff-session'
 import { useThemeStore } from '../hooks/use-theme'
 import { LOGIN_WEBSITE_URL, WEBSITE_URL } from '../login/constants'
@@ -188,6 +189,7 @@ const FREEBUFF_ONLY_COMMANDS = new Set([
   'repo-map',
   'profiles',
   'background',
+  'config',
 ])
 
 const ALL_COMMANDS: CommandDefinition[] = [
@@ -248,6 +250,11 @@ const ALL_COMMANDS: CommandDefinition[] = [
     name: 'background',
     aliases: ['sessions'],
     handler: (params, args) => handleFreebuffToolkitCommand(params, `background ${args}`),
+  }),
+  defineCommandWithArgs({
+    name: 'config',
+    aliases: ['settings'],
+    handler: (params, args) => handleConfigCommand(params, args),
   }),
   defineCommand({
     name: 'copy',

@@ -12,7 +12,12 @@ import type { AgentMode } from './constants'
 const DEFAULT_SETTINGS: Settings = {
   mode: 'DEFAULT' as const,
   adsEnabled: true,
+  autoStartNextSession: false,
+  autoAcceptFollowups: true,
+  autoAcceptFollowupsDelaySeconds: 60,
 }
+
+export const FREEBUFF_SETTINGS_CHANGED_EVENT = 'freebuff:settings-changed'
 
 // Note: The old FREE mode has been renamed back to LITE; migrate on load.
 
@@ -34,6 +39,13 @@ export interface Settings {
    *  first-time onboarding suggested prompts so they only show to brand-new
    *  users and quietly retire afterwards. */
   hasSubmittedFirstPrompt?: boolean
+  /** Automatically rejoin the same chat when a session expires while work
+   * was still active or followups remain unresolved. */
+  autoStartNextSession?: boolean
+  /** Automatically send all three followup suggestions when untouched. */
+  autoAcceptFollowups?: boolean
+  /** Delay before the three followups are sent automatically. */
+  autoAcceptFollowupsDelaySeconds?: number
 }
 
 /**
@@ -131,6 +143,24 @@ const validateSettings = (parsed: unknown): Settings => {
     settings.hasSubmittedFirstPrompt = obj.hasSubmittedFirstPrompt
   }
 
+  if (typeof obj.autoStartNextSession === 'boolean') {
+    settings.autoStartNextSession = obj.autoStartNextSession
+  }
+
+  if (typeof obj.autoAcceptFollowups === 'boolean') {
+    settings.autoAcceptFollowups = obj.autoAcceptFollowups
+  }
+
+  if (
+    typeof obj.autoAcceptFollowupsDelaySeconds === 'number' &&
+    Number.isInteger(obj.autoAcceptFollowupsDelaySeconds) &&
+    obj.autoAcceptFollowupsDelaySeconds >= 0 &&
+    obj.autoAcceptFollowupsDelaySeconds <= 3600
+  ) {
+    settings.autoAcceptFollowupsDelaySeconds =
+      obj.autoAcceptFollowupsDelaySeconds
+  }
+
   return settings
 }
 
@@ -148,6 +178,7 @@ export const saveSettings = (newSettings: Partial<Settings>): void => {
     const mergedSettings = { ...existingSettings, ...newSettings }
 
     fs.writeFileSync(settingsPath, JSON.stringify(mergedSettings, null, 2))
+    globalThis.dispatchEvent?.(new Event(FREEBUFF_SETTINGS_CHANGED_EVENT))
   } catch (error) {
     logger.debug(
       {
@@ -209,3 +240,13 @@ export const markFirstPromptSubmitted = (): void => {
   if (loadSettings().hasSubmittedFirstPrompt === true) return
   saveSettings({ hasSubmittedFirstPrompt: true })
 }
+
+export const getAutoStartNextSession = (): boolean =>
+  loadSettings().autoStartNextSession ?? DEFAULT_SETTINGS.autoStartNextSession!
+
+export const getAutoAcceptFollowups = (): boolean =>
+  loadSettings().autoAcceptFollowups ?? DEFAULT_SETTINGS.autoAcceptFollowups!
+
+export const getAutoAcceptFollowupsDelaySeconds = (): number =>
+  loadSettings().autoAcceptFollowupsDelaySeconds ??
+  DEFAULT_SETTINGS.autoAcceptFollowupsDelaySeconds!

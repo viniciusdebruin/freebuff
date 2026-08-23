@@ -13,7 +13,12 @@ import {
 
 import * as auth from '../auth'
 import {
+  getAutoAcceptFollowups,
+  getAutoAcceptFollowupsDelaySeconds,
+  getAutoStartNextSession,
   loadFreebuffModelPreference,
+  loadSettings,
+  saveSettings,
   saveFreebuffModelPreference,
 } from '../settings'
 
@@ -76,5 +81,46 @@ describe('freebuff model preference', () => {
       saveFreebuffModelPreference(id)
       expect(loadFreebuffModelPreference()).toBe(id)
     }
+  })
+})
+
+describe('automation settings', () => {
+  test('uses safe defaults and persists automation preferences', () => {
+    testConfigDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'freebuff-settings-test-'),
+    )
+    getConfigDirSpy = spyOn(auth, 'getConfigDir').mockReturnValue(testConfigDir)
+
+    expect(getAutoStartNextSession()).toBe(false)
+    expect(getAutoAcceptFollowups()).toBe(true)
+    expect(getAutoAcceptFollowupsDelaySeconds()).toBe(60)
+
+    saveSettings({
+      autoStartNextSession: true,
+      autoAcceptFollowups: false,
+      autoAcceptFollowupsDelaySeconds: 15,
+    })
+
+    expect(getAutoStartNextSession()).toBe(true)
+    expect(getAutoAcceptFollowups()).toBe(false)
+    expect(getAutoAcceptFollowupsDelaySeconds()).toBe(15)
+    expect(loadSettings().autoAcceptFollowupsDelaySeconds).toBe(15)
+  })
+
+  test('rejects unsafe followup delay values when loading settings', () => {
+    testConfigDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'freebuff-settings-test-'),
+    )
+    getConfigDirSpy = spyOn(auth, 'getConfigDir').mockReturnValue(testConfigDir)
+    fs.writeFileSync(
+      path.join(testConfigDir, 'settings.json'),
+      JSON.stringify({
+        autoStartNextSession: 'yes',
+        autoAcceptFollowupsDelaySeconds: 9999,
+      }),
+    )
+
+    expect(getAutoStartNextSession()).toBe(false)
+    expect(getAutoAcceptFollowupsDelaySeconds()).toBe(60)
   })
 })
