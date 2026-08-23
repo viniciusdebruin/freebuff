@@ -8,6 +8,22 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 BIN_PATH="${REPO_ROOT}/cli/bin/freebuff"
 
+# Plank can start a terminal without carrying the session bus variables that
+# desktop URL and clipboard helpers need. Recover them only when the session
+# sockets are present, leaving normal inherited values untouched.
+if [[ -z "${XDG_RUNTIME_DIR:-}" && -d "/run/user/$(id -u)" ]]; then
+  export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+fi
+if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" && -S "${XDG_RUNTIME_DIR:-}/bus" ]]; then
+  export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+fi
+if [[ -z "${DISPLAY:-}" && -S /tmp/.X11-unix/X0 ]]; then
+  export DISPLAY=:0
+fi
+if [[ -z "${XAUTHORITY:-}" && -f "${HOME:-}/.Xauthority" ]]; then
+  export XAUTHORITY="${HOME}/.Xauthority"
+fi
+
 if [[ ! -x "${BIN_PATH}" ]]; then
   printf 'Freebuff binary not found or not executable: %s\n' "${BIN_PATH}" >&2
   printf 'Build it with: bun run build:freebuff\n' >&2
