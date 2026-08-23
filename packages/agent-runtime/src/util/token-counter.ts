@@ -1,6 +1,8 @@
 import { LRUCache } from '@codebuff/common/util/lru-cache'
 import { encode } from 'gpt-tokenizer/esm/model/gpt-4o'
 
+import { safeJsonStringify } from './format-value'
+
 import type { Message } from '@codebuff/common/types/messages/codebuff-message'
 
 const ANTHROPIC_TOKEN_FUDGE_FACTOR = 1.35
@@ -41,7 +43,7 @@ export function countTokens(text: string): number {
 export function countTokensJson(value: unknown): number {
   // JSON.stringify(undefined) returns undefined; fall back to '' so countTokens
   // always gets a string.
-  return countTokens(JSON.stringify(value) ?? '')
+  return countTokens(safeJsonStringify(value))
 }
 
 /**

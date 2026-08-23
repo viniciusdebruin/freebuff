@@ -6,6 +6,7 @@ import { cloneDeep } from 'lodash'
 import { clearProposedContentForRun } from './tools/handlers/tool/proposed-content-store'
 import { executeToolCall } from './tools/tool-executor'
 import { parseTextWithToolCalls } from './util/parse-tool-calls-from-text'
+import { safeJsonStringify } from './util/format-value'
 
 import type { FileProcessingState } from './tools/handlers/tool/write-file'
 import type { ExecuteToolCallParams } from './tools/tool-executor'
@@ -270,7 +271,7 @@ export async function runProgrammaticStep(
       if (!parseResult.success) {
         throw new Error(
           `Invalid yield value from handleSteps in agent ${template.id}: ${parseResult.error.message}. ` +
-            `Received: ${JSON.stringify(result.value)}`,
+            `Received: ${safeJsonStringify(result.value)}`,
         )
       }
 

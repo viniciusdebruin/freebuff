@@ -1,10 +1,13 @@
-export function formatValueForError(value: unknown, maxLength = 500): string {
-  let jsonStr: string
+export function safeJsonStringify(value: unknown): string {
   try {
-    jsonStr = JSON.stringify(value, null, 2) ?? 'undefined'
+    return JSON.stringify(value) ?? 'undefined'
   } catch {
-    jsonStr = '[unserializable value: circular structure]'
+    return '[unserializable value: circular structure]'
   }
+}
+
+export function formatValueForError(value: unknown, maxLength = 500): string {
+  const jsonStr = safeJsonStringify(value)
   const truncated =
     jsonStr.length > maxLength
       ? jsonStr.slice(0, maxLength) + '...(truncated)'

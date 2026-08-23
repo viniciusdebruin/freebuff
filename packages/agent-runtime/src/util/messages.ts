@@ -8,6 +8,7 @@ import { cloneDeep, isEqual } from 'lodash'
 
 import { simplifyTerminalCommandResults } from './simplify-tool-results'
 import { countTokensMessages } from './token-counter'
+import { safeJsonStringify } from './format-value'
 
 import type { System } from '../llm-api/claude'
 import type {
@@ -57,7 +58,7 @@ export function buildUserMessageContent(
   // Only prompt/params, combine and return as simple text
   const textParts = buildArray([
     promptHasNonWhitespaceText ? prompt : undefined,
-    params && JSON.stringify(params, null, 2),
+    params && safeJsonStringify(params),
   ])
   return [
     {

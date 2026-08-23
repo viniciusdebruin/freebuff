@@ -635,7 +635,10 @@ export function parseRawCustomToolCall(params: {
     }
   }
 
-  const input = JSON.parse(JSON.stringify(parsedInput.input))
+  // The parsed tool input may be augmented by an MCP/custom-tool adapter.
+  // Clone it without JSON serialization so a circular adapter value cannot
+  // terminate the agent before the normal tool-error/retry path runs.
+  const input = cloneDeep(parsedInput.input) as Record<string, any>
   if (endsAgentStepParam in input) {
     delete input[endsAgentStepParam]
   }
