@@ -1,0 +1,9 @@
+{
+  "name": "@freebuff/agent-toolkit",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck src/*.ts src/*.test.ts"
+  }
+}
