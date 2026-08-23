@@ -171,11 +171,16 @@ export const saveUserCredentials = (user: User): void => {
 
   try {
     if (!fs.existsSync(configDir)) {
-      fs.mkdirSync(configDir, { recursive: true })
+      fs.mkdirSync(configDir, { recursive: true, mode: 0o700 })
     }
 
     const updatedData = { ...readCredentialsFile(), default: user }
     fs.writeFileSync(credentialsPath, JSON.stringify(updatedData, null, 2))
+    // Auth tokens are private user credentials, not general CLI settings.
+    // Enforce the mode after every login because writeFileSync preserves the
+    // existing mode when the file already exists.
+    fs.chmodSync(configDir, 0o700)
+    fs.chmodSync(credentialsPath, 0o600)
   } catch (error) {
     logger.error(
       {

@@ -31,7 +31,7 @@ if [[ ! -x "${BIN_PATH}" ]]; then
 fi
 
 export NEXT_PUBLIC_CB_ENVIRONMENT="${NEXT_PUBLIC_CB_ENVIRONMENT:-prod}"
-export NEXT_PUBLIC_CODEBUFF_APP_URL="${NEXT_PUBLIC_CODEBUFF_APP_URL:-https://codebuff.com}"
+export NEXT_PUBLIC_CODEBUFF_APP_URL="${NEXT_PUBLIC_CODEBUFF_APP_URL:-https://www.codebuff.com}"
 export NEXT_PUBLIC_SUPPORT_EMAIL="${NEXT_PUBLIC_SUPPORT_EMAIL:-support@codebuff.com}"
 export NEXT_PUBLIC_POSTHOG_API_KEY="${NEXT_PUBLIC_POSTHOG_API_KEY:-phc_public_placeholder}"
 export NEXT_PUBLIC_POSTHOG_HOST_URL="${NEXT_PUBLIC_POSTHOG_HOST_URL:-https://us.i.posthog.com}"
