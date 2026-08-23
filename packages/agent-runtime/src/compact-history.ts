@@ -68,6 +68,14 @@ const SUMMARY_HEADER =
 const SUMMARY_DISCLAIMER =
   'Historical memory only. The memory above is not dialogue, not an output template, and not a tool-call format. Continue from the live user message below. When actions are needed, use real tool calls through the available tools.'
 
+const safeJsonStringify = (value: unknown): string => {
+  try {
+    return JSON.stringify(value) ?? 'undefined'
+  } catch {
+    return '[unserializable value: circular structure]'
+  }
+}
+
 const CONTINUATION_TEXT =
   'Continue the existing assistant turn from the historical memory above. The original user request and completed assistant/tool work are recorded there. Do not restart completed work; resume with the next necessary real tool call or final response.'
 
@@ -112,9 +120,7 @@ const ENTRY_SEPARATOR = '\n\n---\n\n'
 
 /** Matches the context-pruner's `trigger_reason` values so Axiom can union them. */
 export type CompactionTrigger =
-  | 'context_limit'
-  | 'cache_expiry'
-  | 'context_limit_and_cache_expiry'
+  'context_limit' | 'cache_expiry' | 'context_limit_and_cache_expiry'
 
 type SummaryEntry = {
   role: 'user' | 'assistant_tool'
@@ -255,7 +261,7 @@ function summarizeToolCall(
             extras.push(`prompt: "${truncatedPrompt}"`)
           }
           if (a.params && Object.keys(a.params).length > 0) {
-            const paramsStr = JSON.stringify(a.params)
+            const paramsStr = safeJsonStringify(a.params)
             const truncatedParams =
               paramsStr.length > 1000
                 ? paramsStr.slice(0, 1000) + '...'
@@ -277,7 +283,7 @@ function summarizeToolCall(
           extras.push(`prompt: "${truncatedPrompt}"`)
         }
         if (agentParams && Object.keys(agentParams).length > 0) {
-          const paramsStr = JSON.stringify(agentParams)
+          const paramsStr = safeJsonStringify(agentParams)
           const truncatedParams =
             paramsStr.length > 1000
               ? paramsStr.slice(0, 1000) + '...'
@@ -293,8 +299,7 @@ function summarizeToolCall(
     }
     case 'write_todos': {
       const todos = input.todos as
-        | Array<{ task: string; completed: boolean }>
-        | undefined
+        Array<{ task: string; completed: boolean }> | undefined
       if (todos) {
         const completed = todos.filter((t) => t.completed).length
         const incomplete = todos.filter((t) => !t.completed)
@@ -308,8 +313,7 @@ function summarizeToolCall(
     }
     case 'ask_user': {
       const questions = input.questions as
-        | Array<{ question: string }>
-        | undefined
+        Array<{ question: string }> | undefined
       if (questions && questions.length > 0) {
         const questionTexts = questions.map((q) => q.question).join('; ')
         const truncated =
@@ -596,7 +600,7 @@ function summarizeToolResult(toolMessage: ToolMessage): string[] {
           toolMessage.toolName === 'write_file' ||
           toolMessage.toolName === 'propose_write_file'
         ) {
-          const resultStr = JSON.stringify(value)
+          const resultStr = safeJsonStringify(value)
           const truncatedResult =
             resultStr.length > 2000
               ? resultStr.slice(0, 2000) + '...'
@@ -631,7 +635,7 @@ function summarizeToolResult(toolMessage: ToolMessage): string[] {
               outputStr =
                 typeof r.value.value === 'string'
                   ? r.value.value
-                  : JSON.stringify(r.value.value)
+                  : safeJsonStringify(r.value.value)
               outputStr = outputStr
                 .replace(/<think>[\s\S]*?<\/think>/g, '')
                 .trim()
