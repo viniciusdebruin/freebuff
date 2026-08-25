@@ -1,4 +1,3 @@
-import { FREEBUFF_WEB_URL_PROD } from '@codebuff/common/constants/hosts'
 import { env, IS_DEV } from '@codebuff/common/env'
 
 import { IS_FREEBUFF } from '../utils/constants'
@@ -6,10 +5,12 @@ import { IS_FREEBUFF } from '../utils/constants'
 // Get the website URL from environment or use default
 export const WEBSITE_URL = env.NEXT_PUBLIC_CODEBUFF_APP_URL
 
-// Freebuff login flow uses the freebuff web app instead of codebuff.com
+// The session API validates tokens on the canonical Codebuff host. Generate
+// the CLI login code there as well; using freebuff.com here creates a token
+// that later fails with 401 when the CLI opens the Freebuff session.
 const FREEBUFF_WEB_URL = IS_DEV
   ? 'http://localhost:3002'
-  : (env.NEXT_PUBLIC_FREEBUFF_APP_URL ?? FREEBUFF_WEB_URL_PROD)
+  : WEBSITE_URL
 export const LOGIN_WEBSITE_URL = IS_FREEBUFF ? FREEBUFF_WEB_URL : WEBSITE_URL
 
 /** Visible marker for builds distributed from the personal Freebuff fork. */
