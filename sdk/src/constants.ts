@@ -6,8 +6,17 @@ export { IS_DEV, IS_TEST, IS_PROD }
 
 export const CODEBUFF_BINARY = 'codebuff'
 
+/** True when this SDK is embedded in the Freebuff-only CLI build. */
+export const IS_FREEBUFF = process.env.FREEBUFF_MODE === 'true'
+
+/** Keep authenticated API requests on the canonical Codebuff origin. */
+const normalizeWebsiteUrl = (url: string): string =>
+  url
+    .replace(/\/$/, '')
+    .replace(/^https:\/\/codebuff\.com(?=\/|$)/i, 'https://www.codebuff.com')
+
 /** URL baked in at bundle time (CLI / local dev shell). */
-const bundledWebsiteUrl = env.NEXT_PUBLIC_CODEBUFF_APP_URL
+const bundledWebsiteUrl = normalizeWebsiteUrl(env.NEXT_PUBLIC_CODEBUFF_APP_URL)
 
 /**
  * Resolve the Codebuff backend base URL at call time. Remote hosts that bundle
@@ -16,7 +25,7 @@ const bundledWebsiteUrl = env.NEXT_PUBLIC_CODEBUFF_APP_URL
  * remote runtime cannot reach. Deployment env wins when present.
  */
 export function getWebsiteUrl(): string {
-  return (getRuntimeAppUrlFromEnv() ?? bundledWebsiteUrl).replace(/\/$/, '')
+  return normalizeWebsiteUrl(getRuntimeAppUrlFromEnv() ?? bundledWebsiteUrl)
 }
 
 /** @deprecated Prefer {@link getWebsiteUrl} for runtime resolution. */

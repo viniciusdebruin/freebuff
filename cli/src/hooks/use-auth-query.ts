@@ -195,6 +195,13 @@ export function useLoginMutation(deps: UseLoginMutationDeps = {}) {
       // Save credentials to file system
       saveUserCredentials(user)
 
+      // Freebuff tokens are validated by the Freebuff session gate, not by
+      // Codebuff's /api/v1/me endpoint. Keep the raw user after saving so a
+      // successful browser login is not turned into a false auth failure.
+      if (IS_FREEBUFF) {
+        return user
+      }
+
       // Validate the new credentials
       const authResult = await validateApiKey({
         apiKey: user.authToken,

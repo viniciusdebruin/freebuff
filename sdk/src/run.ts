@@ -38,6 +38,7 @@ import { executeComposioToolViaServer } from './composio'
 import { getErrorStatusCode } from './error-utils'
 import { getAgentRuntimeImpl } from './impl/agent-runtime'
 import { getUserInfoFromApiKey } from './impl/database'
+import { IS_FREEBUFF } from './constants'
 import { initialSessionState, applyOverridesToSessionState } from './run-state'
 import type { ComputedProjectIndex } from './run-state'
 import { changeFile } from './tools/change-file'
@@ -722,15 +723,20 @@ async function runOnce({
   const promptId = Math.random().toString(36).substring(2, 15)
 
   // Send input
-  const userInfo = await getUserInfoFromApiKey({
-    ...agentRuntimeImpl,
-    apiKey,
-    fields: ['id'],
-  })
-  if (!userInfo) {
+  // Freebuff tokens are validated by the Freebuff session gate and are not
+  // valid on Codebuff's ordinary /api/v1/me endpoint. Keep the legacy check
+  // for the normal Codebuff SDK, but do not reject a valid Freebuff run here.
+  const userInfo = IS_FREEBUFF
+    ? null
+    : await getUserInfoFromApiKey({
+        ...agentRuntimeImpl,
+        apiKey,
+        fields: ['id'],
+      })
+  if (!IS_FREEBUFF && !userInfo) {
     return getCancelledRunState('Invalid API key or user not found')
   }
-  const authenticatedUserId = userInfo.id
+  const authenticatedUserId = userInfo?.id
   const userId = requestedUserId ?? authenticatedUserId
 
   if (signal?.aborted) {
