@@ -94,9 +94,13 @@ export function sessionFetchSignal(
 }
 
 function sessionEndpoint(): string {
-  const base = (
+  const configuredBase =
     env.NEXT_PUBLIC_CODEBUFF_APP_URL || 'https://www.codebuff.com'
-  ).replace(/\/$/, '')
+  // Avoid the codebuff.com -> www.codebuff.com redirect: fetch may drop the
+  // Authorization header when following that cross-host redirect.
+  const base = configuredBase
+    .replace(/^https:\/\/codebuff\.com(?=\/|$)/i, 'https://www.codebuff.com')
+    .replace(/\/$/, '')
   return `${base}/api/v1/freebuff/session`
 }
 
