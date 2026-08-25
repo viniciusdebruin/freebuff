@@ -1,0 +1,267 @@
+From 8595190ed4f2e4f0012207876f1c383477689d92 Mon Sep 17 00:00:00 2001
+From: viniciusdebruin <vinicius@debruin.com.br>
+Date: Sat, 22 Aug 2026 18:30:27 -0300
+Subject: [PATCH 02/13] Improve Freebuff MiMo reliability and retries
+
+
+diff --git a/cli/src/components/tools/suggest-followups.tsx b/cli/src/components/tools/suggest-followups.tsx
+index 88fc06077..f589a906e 100644
+--- a/cli/src/components/tools/suggest-followups.tsx
++++ b/cli/src/components/tools/suggest-followups.tsx
+@@ -4,7 +4,10 @@ import { useCallback, useEffect, useState } from 'react'
+ import { defineToolComponent } from './types'
+ import { useTerminalDimensions } from '../../hooks/use-terminal-dimensions'
+ import { useTheme } from '../../hooks/use-theme'
+-import { getLatestFollowupToolCallId, useChatStore } from '../../state/chat-store'
++import {
++  getLatestFollowupToolCallId,
++  useChatStore,
++} from '../../state/chat-store'
+ import { useFreebuffSessionStore } from '../../state/freebuff-session-store'
+ import { IS_FREEBUFF } from '../../utils/constants'
+ import { Button } from '../button'
+@@ -17,6 +20,8 @@ const MIN_LABEL_COLUMN_WIDTH = 12
+ const MAX_LABEL_COLUMN_WIDTH = 60
+ /** Minimum terminal width to show the prompt description on hover */
+ const MIN_WIDTH_FOR_DESCRIPTION = 80
++/** Automatically choose all followups when the user leaves them untouched. */
++const AUTO_ACCEPT_FOLLOWUPS_MS = 60_000
+ 
+ interface FollowupLineProps {
+   followup: SuggestedFollowup
+@@ -123,7 +128,8 @@ const FollowupLine = ({
+           <box style={{ flexGrow: 1 }}>
+             <text style={{ wrapMode: 'none' }}>
+               <span fg={theme.muted} attributes={TextAttributes.ITALIC}>
+-                {paddingSpaces}{truncatedPrompt}
++                {paddingSpaces}
++                {truncatedPrompt}
+               </span>
+             </text>
+           </box>
+@@ -280,6 +286,56 @@ const SuggestFollowupsItem = ({
+ 
+   // Track which item is hovered (for passing to children)
+   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
++  const [autoAcceptSeconds, setAutoAcceptSeconds] = useState<number | null>(
++    null,
++  )
++  const followupSignature = followups
++    .map((followup) => `${followup.label ?? ''}\u0000${followup.prompt}`)
++    .join('\u0001')
++
++  useEffect(() => {
++    if (
++      !isActive ||
++      followups.length !== 3 ||
++      clickedIndices.size > 0 ||
++      isFreebuffSessionOver
++    ) {
++      setAutoAcceptSeconds(null)
++      return
++    }
++
++    setAutoAcceptSeconds(AUTO_ACCEPT_FOLLOWUPS_MS / 1000)
++
++    const countdown = setInterval(() => {
++      setAutoAcceptSeconds((seconds) =>
++        seconds == null ? seconds : Math.max(0, seconds - 1),
++      )
++    }, 1000)
++
++    const autoAccept = setTimeout(() => {
++      // The effect is cancelled as soon as the user clicks a suggestion or
++      // this tool is no longer the active followup set.
++      for (const [index, followup] of followups.entries()) {
++        globalThis.dispatchEvent(
++          new CustomEvent('codebuff:send-followup', {
++            detail: { prompt: followup.prompt, index, toolCallId },
++          }),
++        )
++      }
++      setAutoAcceptSeconds(null)
++    }, AUTO_ACCEPT_FOLLOWUPS_MS)
++
++    return () => {
++      clearInterval(countdown)
++      clearTimeout(autoAccept)
++    }
++  }, [
++    clickedIndices.size,
++    followupSignature,
++    isActive,
++    isFreebuffSessionOver,
++    toolCallId,
++  ])
+ 
+   // For past messages, show collapsed toggle view
+   if (!isActive) {
+@@ -300,6 +356,11 @@ const SuggestFollowupsItem = ({
+   return (
+     <box style={{ flexDirection: 'column' }}>
+       <text style={{ fg: theme.muted }}>Suggested followups:</text>
++      {autoAcceptSeconds != null && (
++        <text style={{ fg: theme.muted }}>
++          Auto-selecting all 3 in {autoAcceptSeconds}s (click one to cancel)
++        </text>
++      )}
+       <box style={{ flexDirection: 'column' }}>
+         {followups.map((followup, index) => (
+           <FollowupLine
+diff --git a/cli/src/hooks/use-auth-query.ts b/cli/src/hooks/use-auth-query.ts
+index d5b47c64d..cb01e64d2 100644
+--- a/cli/src/hooks/use-auth-query.ts
++++ b/cli/src/hooks/use-auth-query.ts
+@@ -19,6 +19,7 @@ import {
+   type User,
+ } from '../utils/auth'
+ import { resetCodebuffClient } from '../utils/codebuff-client'
++import { IS_FREEBUFF } from '../utils/constants'
+ import { logger as defaultLogger, loggerContext } from '../utils/logger'
+ 
+ import type { GetUserInfoFromApiKeyFn } from '@codebuff/common/types/contracts/database'
+@@ -138,7 +139,11 @@ export function useAuthQuery(deps: UseAuthQueryDeps = {}) {
+   return useQuery({
+     queryKey: authQueryKeys.validation(apiKey),
+     queryFn: () => validateApiKey({ apiKey, getUserInfoFromApiKey, logger }),
+-    enabled: !!apiKey,
++    // Freebuff login tokens are issued by the Freebuff auth flow and are not
++    // valid on Codebuff's /api/v1/me endpoint. Freebuff validates the token
++    // when the free session is opened, so avoid falsely rejecting a valid
++    // Freebuff login here and sending the user back into the login loop.
++    enabled: !!apiKey && !IS_FREEBUFF,
+     staleTime: 5 * 60 * 1000, // 5 minutes
+     gcTime: 10 * 60 * 1000, // 10 minutes
+     // Retry only for retryable network errors (5xx, timeouts, etc.)
+diff --git a/cli/src/utils/settings.ts b/cli/src/utils/settings.ts
+index 90522ceea..d584be373 100644
+--- a/cli/src/utils/settings.ts
++++ b/cli/src/utils/settings.ts
+@@ -1,11 +1,7 @@
+ import fs from 'fs'
+ import path from 'path'
+ 
+-import {
+-  FREEBUFF_MODELS,
+-  isFreebuffModelId,
+-  migrateSupersededFreebuffModelPreference,
+-} from '@codebuff/common/constants/freebuff-models'
++import { isFreebuffModelId } from '@codebuff/common/constants/freebuff-models'
+ 
+ import { getConfigDir } from './auth'
+ import { AGENT_MODES } from './constants'
+@@ -120,17 +116,6 @@ const validateSettings = (parsed: unknown): Settings => {
+     settings.freebuffModel = obj.freebuffModel
+   }
+ 
+-  // Steer off a model that has since been superseded (MiniMax M3, MiMo 2.5 →
+-  // V4 Flash) on EVERY load, so each new freebuff session starts
+-  // on the better model instead of a pick made before it existed. Picking a
+-  // superseded model still works for the session you are in; it just stops
+-  // being what the next launch opens on.
+-  const replacement = migrateSupersededFreebuffModelPreference(
+-    settings.freebuffModel,
+-    FREEBUFF_MODELS.map((model) => model.id),
+-  )
+-  if (replacement) settings.freebuffModel = replacement
+-
+   // Validate alwaysUseALaCarte (legacy)
+   if (typeof obj.alwaysUseALaCarte === 'boolean') {
+     settings.alwaysUseALaCarte = obj.alwaysUseALaCarte
+diff --git a/packages/agent-runtime/src/llm-api/codebuff-web-api.ts b/packages/agent-runtime/src/llm-api/codebuff-web-api.ts
+index a4b81c997..8fc4f849a 100644
+--- a/packages/agent-runtime/src/llm-api/codebuff-web-api.ts
++++ b/packages/agent-runtime/src/llm-api/codebuff-web-api.ts
+@@ -5,8 +5,12 @@ import type { JSONObject } from '@codebuff/common/types/json'
+ import type { Logger } from '@codebuff/common/types/contracts/logger'
+ 
+ const FETCH_TIMEOUT_MS = 30_000
+-const MAX_RETRIES = 3
++// Keep retrying transient capacity/network failures long enough for a busy
++// local session to recover instead of surfacing an avoidable terminal error.
++const MAX_RETRIES = 10
+ const RETRY_BASE_DELAY_MS = 1000
++const RETRY_MAX_DELAY_MS = 30_000
++const RETRY_JITTER_RATIO = 0.25
+ const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
+ 
+ interface CodebuffWebApiEnv {
+@@ -36,11 +40,34 @@ const getNumberField = (value: unknown, key: string): number | undefined => {
+   return typeof field === 'number' ? field : undefined
+ }
+ 
++const getRetryAfterMs = (headers: Headers): number | undefined => {
++  const value = headers.get('retry-after')
++  if (!value) return undefined
++
++  const seconds = Number(value)
++  if (Number.isFinite(seconds) && seconds >= 0) {
++    return Math.min(seconds * 1000, RETRY_MAX_DELAY_MS)
++  }
++
++  const timestamp = Date.parse(value)
++  if (!Number.isFinite(timestamp)) return undefined
++  return Math.min(Math.max(0, timestamp - Date.now()), RETRY_MAX_DELAY_MS)
++}
++
++const getRetryDelayMs = (attempt: number, retryAfterMs?: number): number => {
++  if (retryAfterMs !== undefined) return retryAfterMs
++
++  const exponentialDelay = Math.min(
++    RETRY_BASE_DELAY_MS * 2 ** (attempt - 1),
++    RETRY_MAX_DELAY_MS,
++  )
++  const jitter = 1 + (Math.random() * 2 - 1) * RETRY_JITTER_RATIO
++  return Math.round(exponentialDelay * jitter)
++}
++
+ const callCodebuffV1 = async (params: {
+   endpoint:
+-    | '/api/v1/web-search'
+-    | '/api/v1/docs-search'
+-    | '/api/v1/gravity-index'
++    '/api/v1/web-search' | '/api/v1/docs-search' | '/api/v1/gravity-index'
+   payload: unknown
+   fetch: typeof globalThis.fetch
+   logger: Logger
+@@ -88,7 +115,7 @@ const callCodebuffV1 = async (params: {
+ 
+         // Retry on transient errors
+         if (RETRYABLE_STATUS_CODES.has(res.status) && attempt < MAX_RETRIES) {
+-          const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)
++          const delay = getRetryDelayMs(attempt, getRetryAfterMs(res.headers))
+           logger.warn(
+             {
+               url,
+@@ -124,7 +151,7 @@ const callCodebuffV1 = async (params: {
+ 
+       // Retry on network errors
+       if (attempt < MAX_RETRIES) {
+-        const delay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1)
++        const delay = getRetryDelayMs(attempt)
+         logger.warn(
+           {
+             error:
+diff --git a/packages/agent-runtime/src/prompt-agent-stream.ts b/packages/agent-runtime/src/prompt-agent-stream.ts
+index ef2eb3a15..ef7632179 100644
+--- a/packages/agent-runtime/src/prompt-agent-stream.ts
++++ b/packages/agent-runtime/src/prompt-agent-stream.ts
+@@ -14,6 +14,9 @@ import type { Message } from '@codebuff/common/types/messages/codebuff-message'
+ import type { OpenRouterProviderOptions } from '@codebuff/common/types/agent-template'
+ import type { ToolSet } from 'ai'
+ 
++/** More patience for transient API congestion before ending an agent step. */
++const LOCAL_STREAM_MAX_RETRIES = 10
++
+ export const getAgentStreamFromTemplate = (params: {
+   agentId?: string
+   apiKey: string
+@@ -91,7 +94,7 @@ export const getAgentStreamFromTemplate = (params: {
+     logger,
+     localAgentTemplates,
+     maxOutputTokens: undefined,
+-    maxRetries: 3,
++    maxRetries: LOCAL_STREAM_MAX_RETRIES,
+     messages,
+     model,
+     runId,

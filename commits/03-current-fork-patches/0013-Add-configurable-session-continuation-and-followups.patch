@@ -1,0 +1,495 @@
+From 9eb85b79a5b53a4fd7d654078ace602cec4e7379 Mon Sep 17 00:00:00 2001
+From: viniciusdebruin <vinicius@debruin.com.br>
+Date: Sun, 23 Aug 2026 17:05:54 -0300
+Subject: [PATCH 13/13] Add configurable session continuation and followups
+
+
+diff --git a/cli/src/commands/command-registry.ts b/cli/src/commands/command-registry.ts
+index 5d481af8e..5672f0bd3 100644
+--- a/cli/src/commands/command-registry.ts
++++ b/cli/src/commands/command-registry.ts
+@@ -13,6 +13,7 @@ import { buildInterviewPrompt, buildPlanPrompt, buildReviewPromptFromArgs } from
+ import { runBashCommand } from './router'
+ import { handleUsageCommand } from './usage'
+ import { handleFreebuffToolkitCommand } from './freebuff-toolkit'
++import { handleConfigCommand } from './config'
+ import { returnToFreebuffLanding } from '../hooks/use-freebuff-session'
+ import { useThemeStore } from '../hooks/use-theme'
+ import { LOGIN_WEBSITE_URL, WEBSITE_URL } from '../login/constants'
+@@ -188,6 +189,7 @@ const FREEBUFF_ONLY_COMMANDS = new Set([
+   'repo-map',
+   'profiles',
+   'background',
++  'config',
+ ])
+ 
+ const ALL_COMMANDS: CommandDefinition[] = [
+@@ -249,6 +251,11 @@ const ALL_COMMANDS: CommandDefinition[] = [
+     aliases: ['sessions'],
+     handler: (params, args) => handleFreebuffToolkitCommand(params, `background ${args}`),
+   }),
++  defineCommandWithArgs({
++    name: 'config',
++    aliases: ['settings'],
++    handler: (params, args) => handleConfigCommand(params, args),
++  }),
+   defineCommand({
+     name: 'copy',
+     aliases: ['copy-chat', 'export'],
+diff --git a/cli/src/commands/config.ts b/cli/src/commands/config.ts
+new file mode 100644
+index 000000000..e76070477
+--- /dev/null
++++ b/cli/src/commands/config.ts
+@@ -0,0 +1,101 @@
++import {
++  getAutoAcceptFollowups,
++  getAutoAcceptFollowupsDelaySeconds,
++  getAutoStartNextSession,
++  saveSettings,
++} from '../utils/settings'
++import { getSystemMessage, getUserMessage } from '../utils/message-history'
++
++import type { RouterParams } from './command-registry'
++
++function clearInput(params: RouterParams): void {
++  params.setInputValue({ text: '', cursorPosition: 0, lastEditDueToNav: false })
++}
++
++function postConfig(params: RouterParams, message: string): void {
++  params.setMessages((previous) => [
++    ...previous,
++    getUserMessage(params.inputValue.trim()),
++    getSystemMessage(message),
++  ])
++  params.saveToHistory(params.inputValue.trim())
++  clearInput(params)
++}
++
++function parseBoolean(value: string | undefined): boolean | undefined {
++  if (value === 'on' || value === 'true' || value === '1') return true
++  if (value === 'off' || value === 'false' || value === '0') return false
++  return undefined
++}
++
++export function configHelp(): string {
++  return [
++    'Configuração do Freebuff',
++    '',
++    `/config auto-session on|off       ${getAutoStartNextSession() ? 'ON' : 'OFF'} — retoma se havia trabalho ativo`,
++    `/config auto-followups on|off     ${getAutoAcceptFollowups() ? 'ON' : 'OFF'} — aceita as 3 sugestões sem clique`,
++    `/config followup-delay <segundos> ${getAutoAcceptFollowupsDelaySeconds()}s — espera antes das 3 sugestões`,
++    '',
++    'A auto-session só roda se a sessão terminou durante trabalho ativo ou com sugestões pendentes. Ela não entra em loop depois de um chat finalizado e parado.',
++  ].join('\n')
++}
++
++export function handleConfigCommand(params: RouterParams, args: string): void {
++  const tokens = args.trim().toLowerCase().split(/\s+/).filter(Boolean)
++  const setting = tokens[0]
++  const value = tokens[1]
++
++  if (!setting) {
++    postConfig(params, configHelp())
++    return
++  }
++
++  if (setting === 'auto-session' || setting === 'session') {
++    const parsed = parseBoolean(value)
++    if (parsed === undefined) {
++      postConfig(params, 'Uso: /config auto-session on|off')
++      return
++    }
++    saveSettings({ autoStartNextSession: parsed })
++    postConfig(
++      params,
++      `Auto-session ${parsed ? 'ativado' : 'desativado'}. ${parsed ? 'A retomada ocorrerá somente se havia trabalho ativo ou sugestões pendentes.' : ''}`.trim(),
++    )
++    return
++  }
++
++  if (
++    setting === 'auto-followups' ||
++    setting === 'followups' ||
++    setting === 'suggestions'
++  ) {
++    const parsed = parseBoolean(value)
++    if (parsed === undefined) {
++      postConfig(params, 'Uso: /config auto-followups on|off')
++      return
++    }
++    saveSettings({ autoAcceptFollowups: parsed })
++    postConfig(
++      params,
++      `Aceite automático das 3 sugestões ${parsed ? 'ativado' : 'desativado'}.`,
++    )
++    return
++  }
++
++  if (
++    setting === 'followup-delay' ||
++    setting === 'suggestion-delay' ||
++    setting === 'delay'
++  ) {
++    const seconds = Number(value)
++    if (!Number.isInteger(seconds) || seconds < 0 || seconds > 3600) {
++      postConfig(params, 'Uso: /config followup-delay <segundos> (0 a 3600)')
++      return
++    }
++    saveSettings({ autoAcceptFollowupsDelaySeconds: seconds })
++    postConfig(params, `Atraso das 3 sugestões definido para ${seconds}s.`)
++    return
++  }
++
++  postConfig(params, configHelp())
++}
+diff --git a/cli/src/components/session-ended-banner.tsx b/cli/src/components/session-ended-banner.tsx
+index 382b1235f..e0788dab0 100644
+--- a/cli/src/components/session-ended-banner.tsx
++++ b/cli/src/components/session-ended-banner.tsx
+@@ -7,7 +7,7 @@ import {
+ import { getRateLimitsByModel } from '@codebuff/common/types/freebuff-session'
+ import { TextAttributes } from '@opentui/core'
+ import { useKeyboard } from '@opentui/react'
+-import React, { useCallback, useState } from 'react'
++import React, { useCallback, useEffect, useRef, useState } from 'react'
+ 
+ import { Button } from './button'
+ import {
+@@ -17,7 +17,12 @@ import {
+ import { useTheme } from '../hooks/use-theme'
+ import { useFreebuffModelStore } from '../state/freebuff-model-store'
+ import { useFreebuffSessionStore } from '../state/freebuff-session-store'
++import { useChatStore } from '../state/chat-store'
+ import { formatSessionUnits } from '../utils/format-session-units'
++import {
++  FREEBUFF_SETTINGS_CHANGED_EVENT,
++  getAutoStartNextSession,
++} from '../utils/settings'
+ import { isPlainEnterKey } from '../utils/terminal-enter-detection'
+ import { BORDER_CHARS } from '../utils/ui-constants'
+ 
+@@ -42,6 +47,34 @@ export const SessionEndedBanner: React.FC<SessionEndedBannerProps> = ({
+   const [pendingAction, setPendingAction] = useState<
+     'landing' | 'same-chat' | null
+   >(null)
++  const [autoStartNextSession, setAutoStartNextSession] = useState(
++    getAutoStartNextSession,
++  )
++  const [observedActiveWork, setObservedActiveWork] = useState(false)
++  const autoAttemptedRef = useRef(false)
++  const hasPendingFollowups = useChatStore((state) => {
++    const followups = state.suggestedFollowups
++    return Boolean(
++      followups && followups.clickedIndices.size < followups.followups.length,
++    )
++  })
++
++  useEffect(() => {
++    if (isStreaming) setObservedActiveWork(true)
++  }, [isStreaming])
++
++  useEffect(() => {
++    const refreshSettings = () => setAutoStartNextSession(getAutoStartNextSession())
++    globalThis.addEventListener(
++      FREEBUFF_SETTINGS_CHANGED_EVENT,
++      refreshSettings,
++    )
++    return () =>
++      globalThis.removeEventListener(
++        FREEBUFF_SETTINGS_CHANGED_EVENT,
++        refreshSettings,
++      )
++  }, [])
+ 
+   // All premium models share one daily pool; the server replicates the same
+   // snapshot under each premium model id, so the first entry has the right
+@@ -115,6 +148,32 @@ export const SessionEndedBanner: React.FC<SessionEndedBannerProps> = ({
+     refreshFreebuffSession().catch(() => setPendingAction(null))
+   }, [canRestart, continueOnFallback])
+ 
++  useEffect(() => {
++    const unfinishedWork = observedActiveWork || hasPendingFollowups
++    if (
++      !autoStartNextSession ||
++      isStreaming ||
++      pendingAction !== null ||
++      autoAttemptedRef.current ||
++      !unfinishedWork
++    ) {
++      return
++    }
++
++    autoAttemptedRef.current = true
++    const timer = setTimeout(() => {
++      startSameChatSession()
++    }, 250)
++    return () => clearTimeout(timer)
++  }, [
++    autoStartNextSession,
++    hasPendingFollowups,
++    isStreaming,
++    observedActiveWork,
++    pendingAction,
++    startSameChatSession,
++  ])
++
+   useKeyboard(
+     useCallback(
+       (key: KeyEvent) => {
+diff --git a/cli/src/components/tools/suggest-followups.tsx b/cli/src/components/tools/suggest-followups.tsx
+index f589a906e..628e68b97 100644
+--- a/cli/src/components/tools/suggest-followups.tsx
++++ b/cli/src/components/tools/suggest-followups.tsx
+@@ -10,6 +10,11 @@ import {
+ } from '../../state/chat-store'
+ import { useFreebuffSessionStore } from '../../state/freebuff-session-store'
+ import { IS_FREEBUFF } from '../../utils/constants'
++import {
++  FREEBUFF_SETTINGS_CHANGED_EVENT,
++  getAutoAcceptFollowups,
++  getAutoAcceptFollowupsDelaySeconds,
++} from '../../utils/settings'
+ import { Button } from '../button'
+ 
+ import type { ToolRenderConfig } from './types'
+@@ -20,9 +25,6 @@ const MIN_LABEL_COLUMN_WIDTH = 12
+ const MAX_LABEL_COLUMN_WIDTH = 60
+ /** Minimum terminal width to show the prompt description on hover */
+ const MIN_WIDTH_FOR_DESCRIPTION = 80
+-/** Automatically choose all followups when the user leaves them untouched. */
+-const AUTO_ACCEPT_FOLLOWUPS_MS = 60_000
+-
+ interface FollowupLineProps {
+   followup: SuggestedFollowup
+   index: number
+@@ -289,12 +291,35 @@ const SuggestFollowupsItem = ({
+   const [autoAcceptSeconds, setAutoAcceptSeconds] = useState<number | null>(
+     null,
+   )
++  const [autoAcceptEnabled, setAutoAcceptEnabled] = useState(
++    getAutoAcceptFollowups,
++  )
++  const [autoAcceptDelaySeconds, setAutoAcceptDelaySeconds] = useState(
++    getAutoAcceptFollowupsDelaySeconds,
++  )
+   const followupSignature = followups
+     .map((followup) => `${followup.label ?? ''}\u0000${followup.prompt}`)
+     .join('\u0001')
+ 
++  useEffect(() => {
++    const refreshSettings = () => {
++      setAutoAcceptEnabled(getAutoAcceptFollowups())
++      setAutoAcceptDelaySeconds(getAutoAcceptFollowupsDelaySeconds())
++    }
++    globalThis.addEventListener(
++      FREEBUFF_SETTINGS_CHANGED_EVENT,
++      refreshSettings,
++    )
++    return () =>
++      globalThis.removeEventListener(
++        FREEBUFF_SETTINGS_CHANGED_EVENT,
++        refreshSettings,
++      )
++  }, [])
++
+   useEffect(() => {
+     if (
++      !autoAcceptEnabled ||
+       !isActive ||
+       followups.length !== 3 ||
+       clickedIndices.size > 0 ||
+@@ -304,7 +329,8 @@ const SuggestFollowupsItem = ({
+       return
+     }
+ 
+-    setAutoAcceptSeconds(AUTO_ACCEPT_FOLLOWUPS_MS / 1000)
++    const autoAcceptMs = autoAcceptDelaySeconds * 1000
++    setAutoAcceptSeconds(autoAcceptDelaySeconds)
+ 
+     const countdown = setInterval(() => {
+       setAutoAcceptSeconds((seconds) =>
+@@ -323,7 +349,7 @@ const SuggestFollowupsItem = ({
+         )
+       }
+       setAutoAcceptSeconds(null)
+-    }, AUTO_ACCEPT_FOLLOWUPS_MS)
++    }, autoAcceptMs)
+ 
+     return () => {
+       clearInterval(countdown)
+@@ -334,6 +360,8 @@ const SuggestFollowupsItem = ({
+     followupSignature,
+     isActive,
+     isFreebuffSessionOver,
++    autoAcceptDelaySeconds,
++    autoAcceptEnabled,
+     toolCallId,
+   ])
+ 
+diff --git a/cli/src/data/slash-commands.ts b/cli/src/data/slash-commands.ts
+index 799a5ef4b..2becac60d 100644
+--- a/cli/src/data/slash-commands.ts
++++ b/cli/src/data/slash-commands.ts
+@@ -49,6 +49,7 @@ const FREEBUFF_ONLY_COMMAND_IDS = new Set([
+   'repo-map',
+   'profiles',
+   'background',
++  'config',
+ ])
+ 
+ const ALL_SLASH_COMMANDS: SlashCommand[] = [
+@@ -89,6 +90,12 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
+     description: 'Start, inspect, stop, and read logs from durable background sessions',
+     aliases: ['sessions'],
+   },
++  {
++    id: 'config',
++    label: 'config',
++    description: 'Configure automatic session continuation and three-suggestion acceptance',
++    aliases: ['settings'],
++  },
+   {
+     id: 'ads:enable',
+     label: 'ads:enable',
+diff --git a/cli/src/utils/__tests__/settings.test.ts b/cli/src/utils/__tests__/settings.test.ts
+index a7f847af7..a4c582c42 100644
+--- a/cli/src/utils/__tests__/settings.test.ts
++++ b/cli/src/utils/__tests__/settings.test.ts
+@@ -13,7 +13,12 @@ import {
+ 
+ import * as auth from '../auth'
+ import {
++  getAutoAcceptFollowups,
++  getAutoAcceptFollowupsDelaySeconds,
++  getAutoStartNextSession,
+   loadFreebuffModelPreference,
++  loadSettings,
++  saveSettings,
+   saveFreebuffModelPreference,
+ } from '../settings'
+ 
+@@ -78,3 +83,44 @@ describe('freebuff model preference', () => {
+     }
+   })
+ })
++
++describe('automation settings', () => {
++  test('uses safe defaults and persists automation preferences', () => {
++    testConfigDir = fs.mkdtempSync(
++      path.join(os.tmpdir(), 'freebuff-settings-test-'),
++    )
++    getConfigDirSpy = spyOn(auth, 'getConfigDir').mockReturnValue(testConfigDir)
++
++    expect(getAutoStartNextSession()).toBe(false)
++    expect(getAutoAcceptFollowups()).toBe(true)
++    expect(getAutoAcceptFollowupsDelaySeconds()).toBe(60)
++
++    saveSettings({
++      autoStartNextSession: true,
++      autoAcceptFollowups: false,
++      autoAcceptFollowupsDelaySeconds: 15,
++    })
++
++    expect(getAutoStartNextSession()).toBe(true)
++    expect(getAutoAcceptFollowups()).toBe(false)
++    expect(getAutoAcceptFollowupsDelaySeconds()).toBe(15)
++    expect(loadSettings().autoAcceptFollowupsDelaySeconds).toBe(15)
++  })
++
++  test('rejects unsafe followup delay values when loading settings', () => {
++    testConfigDir = fs.mkdtempSync(
++      path.join(os.tmpdir(), 'freebuff-settings-test-'),
++    )
++    getConfigDirSpy = spyOn(auth, 'getConfigDir').mockReturnValue(testConfigDir)
++    fs.writeFileSync(
++      path.join(testConfigDir, 'settings.json'),
++      JSON.stringify({
++        autoStartNextSession: 'yes',
++        autoAcceptFollowupsDelaySeconds: 9999,
++      }),
++    )
++
++    expect(getAutoStartNextSession()).toBe(false)
++    expect(getAutoAcceptFollowupsDelaySeconds()).toBe(60)
++  })
++})
+diff --git a/cli/src/utils/settings.ts b/cli/src/utils/settings.ts
+index d584be373..5ad2bea6d 100644
+--- a/cli/src/utils/settings.ts
++++ b/cli/src/utils/settings.ts
+@@ -12,8 +12,13 @@ import type { AgentMode } from './constants'
+ const DEFAULT_SETTINGS: Settings = {
+   mode: 'DEFAULT' as const,
+   adsEnabled: true,
++  autoStartNextSession: false,
++  autoAcceptFollowups: true,
++  autoAcceptFollowupsDelaySeconds: 60,
+ }
+ 
++export const FREEBUFF_SETTINGS_CHANGED_EVENT = 'freebuff:settings-changed'
++
+ // Note: The old FREE mode has been renamed back to LITE; migrate on load.
+ 
+ /**
+@@ -34,6 +39,13 @@ export interface Settings {
+    *  first-time onboarding suggested prompts so they only show to brand-new
+    *  users and quietly retire afterwards. */
+   hasSubmittedFirstPrompt?: boolean
++  /** Automatically rejoin the same chat when a session expires while work
++   * was still active or followups remain unresolved. */
++  autoStartNextSession?: boolean
++  /** Automatically send all three followup suggestions when untouched. */
++  autoAcceptFollowups?: boolean
++  /** Delay before the three followups are sent automatically. */
++  autoAcceptFollowupsDelaySeconds?: number
+ }
+ 
+ /**
+@@ -131,6 +143,24 @@ const validateSettings = (parsed: unknown): Settings => {
+     settings.hasSubmittedFirstPrompt = obj.hasSubmittedFirstPrompt
+   }
+ 
++  if (typeof obj.autoStartNextSession === 'boolean') {
++    settings.autoStartNextSession = obj.autoStartNextSession
++  }
++
++  if (typeof obj.autoAcceptFollowups === 'boolean') {
++    settings.autoAcceptFollowups = obj.autoAcceptFollowups
++  }
++
++  if (
++    typeof obj.autoAcceptFollowupsDelaySeconds === 'number' &&
++    Number.isInteger(obj.autoAcceptFollowupsDelaySeconds) &&
++    obj.autoAcceptFollowupsDelaySeconds >= 0 &&
++    obj.autoAcceptFollowupsDelaySeconds <= 3600
++  ) {
++    settings.autoAcceptFollowupsDelaySeconds =
++      obj.autoAcceptFollowupsDelaySeconds
++  }
++
+   return settings
+ }
+ 
+@@ -148,6 +178,7 @@ export const saveSettings = (newSettings: Partial<Settings>): void => {
+     const mergedSettings = { ...existingSettings, ...newSettings }
+ 
+     fs.writeFileSync(settingsPath, JSON.stringify(mergedSettings, null, 2))
++    globalThis.dispatchEvent?.(new Event(FREEBUFF_SETTINGS_CHANGED_EVENT))
+   } catch (error) {
+     logger.debug(
+       {
+@@ -209,3 +240,13 @@ export const markFirstPromptSubmitted = (): void => {
+   if (loadSettings().hasSubmittedFirstPrompt === true) return
+   saveSettings({ hasSubmittedFirstPrompt: true })
+ }
++
++export const getAutoStartNextSession = (): boolean =>
++  loadSettings().autoStartNextSession ?? DEFAULT_SETTINGS.autoStartNextSession!
++
++export const getAutoAcceptFollowups = (): boolean =>
++  loadSettings().autoAcceptFollowups ?? DEFAULT_SETTINGS.autoAcceptFollowups!
++
++export const getAutoAcceptFollowupsDelaySeconds = (): number =>
++  loadSettings().autoAcceptFollowupsDelaySeconds ??
++  DEFAULT_SETTINGS.autoAcceptFollowupsDelaySeconds!

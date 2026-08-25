@@ -1,0 +1,883 @@
+From 4476284bbc2d261b0aef19f33bdeed001927d4b9 Mon Sep 17 00:00:00 2001
+From: viniciusdebruin <vinicius@debruin.com.br>
+Date: Sun, 23 Aug 2026 11:33:34 -0300
+Subject: [PATCH 08/13] Add isolated Freebuff agent toolkit
+
+
+diff --git a/contrib/freebuff-agent-toolkit/README.md b/contrib/freebuff-agent-toolkit/README.md
+new file mode 100644
+index 000000000..3090aeae4
+--- /dev/null
++++ b/contrib/freebuff-agent-toolkit/README.md
+@@ -0,0 +1,37 @@
++# Freebuff Agent Toolkit
++
++This is an isolated, dependency-free contribution for Freebuff. It turns four
++useful agent behaviors into small, testable modules that can be integrated into
++the CLI without coupling them to the current command router:
++
++- named provider profiles that keep credentials in environment variables;
++- durable background sessions with private metadata and bounded logs;
++- a lightweight, token-budgeted repository map based on source definitions and
++  import relationships;
++- deterministic task routing with explicit step limits and fallbacks.
++
++The implementation is original and uses only the platform runtime. It does not
++persist API keys, invoke a shell for background commands, or copy provider
++specific integrations into the Freebuff core.
++
++## Run locally
++
++From this directory:
++
++```sh
++bun test
++bun run typecheck
++```
++
++The modules are intentionally independent. The planned CLI integration points
++are the existing provider/session command surfaces, so this folder can be
++reviewed or cherry-picked as one unit before wiring new commands into the main
++interactive loop.
++
++## State layout
++
++By default, state is stored below `${XDG_STATE_HOME:-~/.local/state}/freebuff/agent-toolkit`
++and profile configuration below `${XDG_CONFIG_HOME:-~/.config}/freebuff/agent-toolkit`.
++Set `FREEBUFF_AGENT_TOOLKIT_HOME` in tests or a managed installation to use a
++different root. JSON writes are atomic and private files are created with mode
++`0600`.
+diff --git a/contrib/freebuff-agent-toolkit/package.json b/contrib/freebuff-agent-toolkit/package.json
+new file mode 100644
+index 000000000..106632614
+--- /dev/null
++++ b/contrib/freebuff-agent-toolkit/package.json
+@@ -0,0 +1,9 @@
++{
++  "name": "@freebuff/agent-toolkit",
++  "private": true,
++  "type": "module",
++  "scripts": {
++    "test": "bun test",
++    "typecheck": "tsc --noEmit --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --skipLibCheck src/*.ts src/*.test.ts"
++  }
++}
+diff --git a/contrib/freebuff-agent-toolkit/src/agent-routing.ts b/contrib/freebuff-agent-toolkit/src/agent-routing.ts
+new file mode 100644
+index 000000000..33e9a6796
+--- /dev/null
++++ b/contrib/freebuff-agent-toolkit/src/agent-routing.ts
+@@ -0,0 +1,64 @@
++import type {
++  AgentRoute,
++  ProviderProfile,
++  RouteRequest,
++  RouteRule,
++  TaskKind,
++} from './types.js'
++
++function assertSteps(value: number): void {
++  if (!Number.isInteger(value) || value < 1 || value > 200) {
++    throw new Error('maxSteps must be an integer between 1 and 200')
++  }
++}
++
++export class AgentRouter {
++  private readonly profiles: Map<string, ProviderProfile>
++  private readonly rules: Map<TaskKind, RouteRule>
++
++  constructor(profiles: ProviderProfile[], rules: RouteRule[]) {
++    this.profiles = new Map(profiles.map(profile => [profile.name, profile]))
++    this.rules = new Map()
++    for (const rule of rules) {
++      assertSteps(rule.maxSteps)
++      if (!this.profiles.has(rule.profile)) throw new Error(`Unknown route profile: ${rule.profile}`)
++      for (const fallback of rule.fallbacks ?? []) {
++        if (!this.profiles.has(fallback)) throw new Error(`Unknown fallback profile: ${fallback}`)
++      }
++      this.rules.set(rule.kind, rule)
++    }
++  }
++
++  route(request: RouteRequest): AgentRoute {
++    const rule = this.rules.get(request.kind)
++    const selectedName = request.preferredProfile ?? rule?.profile
++    if (!selectedName) throw new Error(`No route configured for task kind: ${request.kind}`)
++    const profile = this.profiles.get(selectedName)
++    if (!profile) throw new Error(`Unknown requested profile: ${selectedName}`)
++
++    const maxSteps = request.maxSteps ?? rule?.maxSteps ?? profile.maxSteps ?? 40
++    assertSteps(maxSteps)
++    const fallbackNames = (rule?.fallbacks ?? []).filter(name => name !== selectedName)
++    return {
++      kind: request.kind,
++      profile,
++      maxSteps,
++      fallbacks: fallbackNames.map(name => this.profiles.get(name)!).filter(Boolean),
++    }
++  }
++}
++
++export function createDefaultRules(profiles: ProviderProfile[]): RouteRule[] {
++  const names = new Set(profiles.map(profile => profile.name))
++  const firstAvailable = (...candidates: string[]): string | undefined => candidates.find(name => names.has(name))
++  const quick = firstAvailable('quick', 'default')
++  const implementation = firstAvailable('coding', 'default', 'quick')
++  const review = firstAvailable('review', 'coding', 'default')
++  const research = firstAvailable('research', 'default', 'coding')
++  const rules: RouteRule[] = []
++  if (quick) rules.push({ kind: 'quick', profile: quick, maxSteps: 12 })
++  if (implementation) rules.push({ kind: 'implementation', profile: implementation, maxSteps: 80, fallbacks: quick ? [quick] : [] })
++  if (review) rules.push({ kind: 'review', profile: review, maxSteps: 40, fallbacks: implementation && implementation !== review ? [implementation] : [] })
++  if (research) rules.push({ kind: 'research', profile: research, maxSteps: 50, fallbacks: quick && quick !== research ? [quick] : [] })
++  return rules
++}
+diff --git a/contrib/freebuff-agent-toolkit/src/background-sessions.ts b/contrib/freebuff-agent-toolkit/src/background-sessions.ts
+new file mode 100644
+index 000000000..218b4a893
+--- /dev/null
++++ b/contrib/freebuff-agent-toolkit/src/background-sessions.ts
+@@ -0,0 +1,190 @@
++import { createWriteStream } from 'node:fs'
++import { chmod, mkdir, readdir, readFile, stat } from 'node:fs/promises'
++import { spawn, type ChildProcess } from 'node:child_process'
++import { join, resolve } from 'node:path'
++import { randomUUID } from 'node:crypto'
++import { ensureDirectory, readJson, resolveStateRoot, writeJsonAtomic } from './storage.js'
++import type { BackgroundSession, BackgroundSessionStatus } from './types.js'
++
++const ID = /^[A-Za-z0-9._-]{1,80}$/
++const SIGNALS = new Set(['SIGTERM', 'SIGINT', 'SIGKILL', 'SIGHUP'])
++
++function assertId(id: string): void {
++  if (!ID.test(id)) throw new Error('Session id contains unsafe characters')
++}
++
++function isAlive(pid: number): boolean {
++  if (!Number.isInteger(pid) || pid <= 0) return false
++  try {
++    process.kill(pid, 0)
++    return true
++  } catch {
++    return false
++  }
++}
++
++function metadataIsComplete(value: unknown): value is BackgroundSession {
++  if (!value || typeof value !== 'object') return false
++  const session = value as Partial<BackgroundSession>
++  return Boolean(
++    typeof session.id === 'string' &&
++      ID.test(session.id) &&
++      Number.isInteger(session.pid) &&
++      typeof session.cwd === 'string' &&
++      Array.isArray(session.command) &&
++      session.command.every(item => typeof item === 'string') &&
++      typeof session.logPath === 'string' &&
++      typeof session.status === 'string' &&
++      typeof session.startedAt === 'string' &&
++      typeof session.updatedAt === 'string',
++  )
++}
++
++export class BackgroundSessionStore {
++  readonly root: string
++  readonly sessionsDir: string
++  readonly logsDir: string
++
++  constructor(root = resolveStateRoot()) {
++    this.root = resolve(root)
++    this.sessionsDir = join(this.root, 'sessions')
++    this.logsDir = join(this.root, 'logs')
++  }
++
++  private pathFor(id: string): string {
++    assertId(id)
++    return join(this.sessionsDir, `${id}.json`)
++  }
++
++  private async write(session: BackgroundSession): Promise<void> {
++    await writeJsonAtomic(this.pathFor(session.id), session)
++  }
++
++  async register(session: BackgroundSession): Promise<void> {
++    assertId(session.id)
++    if (!resolve(session.cwd)) throw new Error('Session cwd is required')
++    if (!metadataIsComplete(session)) throw new Error('Invalid background session metadata')
++    await ensureDirectory(this.sessionsDir)
++    await ensureDirectory(this.logsDir)
++    await this.write(session)
++  }
++
++  async start(
++    command: string,
++    args: string[] = [],
++    options: { cwd?: string; name?: string } = {},
++  ): Promise<BackgroundSession> {
++    if (!command.trim()) throw new Error('Background command cannot be empty')
++    if (args.some(arg => typeof arg !== 'string')) throw new Error('Background arguments must be strings')
++    const cwd = resolve(options.cwd ?? process.cwd())
++    const id = `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}`
++    const logPath = join(this.logsDir, `${id}.log`)
++    await ensureDirectory(this.logsDir)
++    const log = createWriteStream(logPath, { flags: 'a', mode: 0o600 })
++    const child = spawn(command, args, {
++      cwd,
++      detached: true,
++      stdio: ['ignore', 'pipe', 'pipe'],
++    })
++    child.stdout?.pipe(log, { end: false })
++    child.stderr?.pipe(log, { end: false })
++    child.unref()
++
++    const now = new Date().toISOString()
++    const session: BackgroundSession = {
++      id,
++      name: options.name,
++      pid: child.pid ?? -1,
++      cwd,
++      command: [command, ...args],
++      logPath,
++      status: 'running',
++      startedAt: now,
++      updatedAt: now,
++    }
++    await this.register(session)
++
++    child.once('exit', (exitCode, signal) => {
++      void this.finish(session.id, exitCode ?? undefined, signal ?? undefined)
++      log.end()
++    })
++    child.once('error', error => {
++      void this.finish(session.id, 1, error.name)
++      log.end()
++    })
++    return session
++  }
++
++  async get(id: string): Promise<BackgroundSession | undefined> {
++    const raw = await readJson(this.pathFor(id))
++    if (raw === null) return undefined
++    if (!metadataIsComplete(raw)) throw new Error(`Invalid metadata for session: ${id}`)
++    return raw
++  }
++
++  async list(): Promise<BackgroundSession[]> {
++    let names: string[]
++    try {
++      names = await readdir(this.sessionsDir)
++    } catch (error) {
++      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return []
++      throw error
++    }
++
++    const sessions: BackgroundSession[] = []
++    for (const name of names.filter(item => item.endsWith('.json'))) {
++      const session = await this.get(name.slice(0, -5))
++      if (!session) continue
++      if (session.status === 'running' && !isAlive(session.pid)) {
++        session.status = 'stale'
++        session.updatedAt = new Date().toISOString()
++        await this.write(session)
++      }
++      sessions.push(session)
++    }
++    return sessions.sort((a, b) => b.startedAt.localeCompare(a.startedAt))
++  }
++
++  async stop(id: string, signal = 'SIGTERM'): Promise<BackgroundSession> {
++    if (!SIGNALS.has(signal)) throw new Error(`Unsupported stop signal: ${signal}`)
++    const session = await this.get(id)
++    if (!session) throw new Error(`Unknown background session: ${id}`)
++    if (session.status !== 'running') return session
++
++    try {
++      process.kill(session.pid, signal as NodeJS.Signals)
++    } catch (error) {
++      if (!(error instanceof Error && 'code' in error && error.code === 'ESRCH')) throw error
++    }
++    session.status = 'killed'
++    session.updatedAt = new Date().toISOString()
++    session.finishedAt = session.updatedAt
++    await this.write(session)
++    return session
++  }
++
++  async finish(id: string, exitCode?: number, signal?: string): Promise<void> {
++    const session = await this.get(id)
++    if (!session || session.status !== 'running') return
++    session.status = signal || exitCode !== 0 ? 'failed' : 'exited'
++    session.exitCode = exitCode ?? undefined
++    session.signal = signal
++    session.finishedAt = new Date().toISOString()
++    session.updatedAt = session.finishedAt
++    await this.write(session)
++  }
++
++  async readLog(id: string, maxBytes = 128 * 1024): Promise<string> {
++    if (!Number.isInteger(maxBytes) || maxBytes < 1) throw new Error('maxBytes must be positive')
++    const session = await this.get(id)
++    if (!session) throw new Error(`Unknown background session: ${id}`)
++    const info = await stat(session.logPath)
++    const contents = await readFile(session.logPath)
++    if (info.size <= maxBytes) return contents.toString('utf8')
++    return `[log truncated; showing last ${maxBytes} bytes]\n${contents.subarray(-maxBytes).toString('utf8')}`
++  }
++}
++
++export function normalizeSessionStatus(status: BackgroundSessionStatus): BackgroundSessionStatus {
++  return status
++}
+diff --git a/contrib/freebuff-agent-toolkit/src/index.ts b/contrib/freebuff-agent-toolkit/src/index.ts
+new file mode 100644
+index 000000000..b00f50146
+--- /dev/null
++++ b/contrib/freebuff-agent-toolkit/src/index.ts
+@@ -0,0 +1,6 @@
++export * from './agent-routing.js'
++export * from './background-sessions.js'
++export * from './profile-store.js'
++export * from './repo-map.js'
++export * from './storage.js'
++export * from './types.js'
+diff --git a/contrib/freebuff-agent-toolkit/src/profile-store.ts b/contrib/freebuff-agent-toolkit/src/profile-store.ts
+new file mode 100644
+index 000000000..d04f9b247
+--- /dev/null
++++ b/contrib/freebuff-agent-toolkit/src/profile-store.ts
+@@ -0,0 +1,137 @@
++import { chmod } from 'node:fs/promises'
++import { join } from 'node:path'
++import { readJson, resolveConfigRoot, writeJsonAtomic } from './storage.js'
++import type {
++  ProfileDocument,
++  ProviderProfile,
++  ResolvedProviderProfile,
++} from './types.js'
++
++const PROFILE_NAME = /^[A-Za-z0-9._-]{1,64}$/
++const ENV_NAME = /^[A-Z][A-Z0-9_]{0,127}$/
++const DEFAULT_MAX_STEPS = 40
++
++function defaultDocument(): ProfileDocument {
++  return {
++    version: 1,
++    profiles: {},
++    updatedAt: new Date(0).toISOString(),
++  }
++}
++
++function assertProfile(profile: ProviderProfile): void {
++  if (!PROFILE_NAME.test(profile.name)) {
++    throw new Error('Profile name must contain only letters, numbers, dots, underscores, or hyphens')
++  }
++
++  let url: URL
++  try {
++    url = new URL(profile.baseUrl)
++  } catch {
++    throw new Error(`Invalid profile base URL: ${profile.baseUrl}`)
++  }
++  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
++    throw new Error('Profile base URL must use HTTP or HTTPS')
++  }
++
++  if (!profile.model.trim()) throw new Error('Profile model cannot be empty')
++  if (!ENV_NAME.test(profile.apiKeyEnv)) {
++    throw new Error('Profile apiKeyEnv must be a valid uppercase environment variable')
++  }
++  if (profile.maxSteps !== undefined && (!Number.isInteger(profile.maxSteps) || profile.maxSteps < 1 || profile.maxSteps > 200)) {
++    throw new Error('Profile maxSteps must be an integer between 1 and 200')
++  }
++
++  for (const [key, value] of Object.entries(profile.headers ?? {})) {
++    if (!key.trim() || /[\r\n]/.test(key) || /[\r\n]/.test(value)) {
++      throw new Error('Profile headers cannot contain empty names or newlines')
++    }
++  }
++}
++
++export class ProfileStore {
++  readonly filePath: string
++
++  constructor(filePath = join(resolveConfigRoot(), 'profiles.json')) {
++    this.filePath = filePath
++  }
++
++  async load(): Promise<ProfileDocument> {
++    const raw = await readJson(this.filePath)
++    if (raw === null) return defaultDocument()
++    if (!raw || typeof raw !== 'object') throw new Error('Profile file must contain a JSON object')
++
++    const document = raw as Partial<ProfileDocument>
++    if (document.version !== 1 || !document.profiles || typeof document.profiles !== 'object') {
++      throw new Error('Unsupported profile file format')
++    }
++
++    for (const profile of Object.values(document.profiles)) assertProfile(profile)
++    return {
++      version: 1,
++      active: document.active,
++      profiles: document.profiles,
++      updatedAt: document.updatedAt ?? new Date(0).toISOString(),
++    }
++  }
++
++  async list(): Promise<ProviderProfile[]> {
++    const document = await this.load()
++    return Object.values(document.profiles).sort((a, b) => a.name.localeCompare(b.name))
++  }
++
++  async get(name: string): Promise<ProviderProfile | undefined> {
++    return (await this.load()).profiles[name]
++  }
++
++  async save(profile: ProviderProfile): Promise<void> {
++    assertProfile(profile)
++    const document = await this.load()
++    document.profiles[profile.name] = {
++      ...profile,
++      baseUrl: profile.baseUrl.replace(/\/+$/, ''),
++      model: profile.model.trim(),
++      apiKeyEnv: profile.apiKeyEnv.trim(),
++      maxSteps: profile.maxSteps ?? DEFAULT_MAX_STEPS,
++    }
++    document.updatedAt = new Date().toISOString()
++    await writeJsonAtomic(this.filePath, document)
++  }
++
++  async remove(name: string): Promise<boolean> {
++    const document = await this.load()
++    if (!(name in document.profiles)) return false
++    delete document.profiles[name]
++    if (document.active === name) delete document.active
++    document.updatedAt = new Date().toISOString()
++    await writeJsonAtomic(this.filePath, document)
++    return true
++  }
++
++  async setActive(name: string): Promise<void> {
++    const document = await this.load()
++    if (!document.profiles[name]) throw new Error(`Unknown profile: ${name}`)
++    document.active = name
++    document.updatedAt = new Date().toISOString()
++    await writeJsonAtomic(this.filePath, document)
++  }
++
++  async resolve(name?: string, env: NodeJS.ProcessEnv = process.env): Promise<ResolvedProviderProfile> {
++    const document = await this.load()
++    const selected = name ?? document.active
++    if (!selected || !document.profiles[selected]) {
++      throw new Error('No active provider profile is configured')
++    }
++    const profile = document.profiles[selected]
++    const apiKey = env[profile.apiKeyEnv]?.trim()
++    return apiKey ? { ...profile, apiKey } : { ...profile }
++  }
++
++  async makePrivate(): Promise<void> {
++    await chmod(this.filePath, 0o600)
++  }
++}
++
++export function validateProviderProfile(profile: ProviderProfile): void {
++  assertProfile(profile)
++}
+diff --git a/contrib/freebuff-agent-toolkit/src/repo-map.ts b/contrib/freebuff-agent-toolkit/src/repo-map.ts
+new file mode 100644
+index 000000000..ca29a3dfb
+--- /dev/null
++++ b/contrib/freebuff-agent-toolkit/src/repo-map.ts
+@@ -0,0 +1,129 @@
++import { execFile } from 'node:child_process'
++import { mkdir, readdir, readFile, stat } from 'node:fs/promises'
++import { promisify } from 'node:util'
++import { extname, join, relative, resolve } from 'node:path'
++import type { RepoMapFile, RepoMapOptions, RepoMapResult, RepoSymbol } from './types.js'
++
++const execFileAsync = promisify(execFile)
++const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py', '.go', '.rs', '.java', '.rb'])
++const IGNORED_DIRS = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage', '.next', 'target', 'vendor'])
++const SYMBOL_PATTERNS = [
++  /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/,
++  /^(?:export\s+)?class\s+([A-Za-z_$][\w$]*)/,
++  /^(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/,
++  /^(?:export\s+)?type\s+([A-Za-z_$][\w$]*)\s*[=<]/,
++  /^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/,
++  /^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/,
++  /^\s*class\s+([A-Za-z_]\w*)\s*[:(]/,
++]
++
++async function walk(root: string, directory = root): Promise<string[]> {
++  const entries = await readdir(directory, { withFileTypes: true })
++  const files: string[] = []
++  for (const entry of entries) {
++    if (entry.isDirectory()) {
++      if (!IGNORED_DIRS.has(entry.name)) files.push(...await walk(root, join(directory, entry.name)))
++      continue
++    }
++    if (entry.isFile() && SOURCE_EXTENSIONS.has(extname(entry.name))) {
++      files.push(relative(root, join(directory, entry.name)))
++    }
++  }
++  return files
++}
++
++async function listFiles(root: string): Promise<string[]> {
++  try {
++    const result = await execFileAsync('git', ['-C', root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'])
++    return result.stdout
++      .split('\0')
++      .filter(file => file && SOURCE_EXTENSIONS.has(extname(file)))
++  } catch {
++    return walk(root)
++  }
++}
++
++function symbolsFor(source: string): RepoSymbol[] {
++  const symbols: RepoSymbol[] = []
++  for (const [index, rawLine] of source.split('\n').entries()) {
++    const line = rawLine.trimEnd()
++    for (const pattern of SYMBOL_PATTERNS) {
++      const match = line.match(pattern)
++      if (match) {
++        symbols.push({ name: match[1], line: index + 1, signature: line.trim() })
++        break
++      }
++    }
++  }
++  return symbols
++}
++
++function importedPaths(source: string): string[] {
++  const imports: string[] = []
++  const pattern = /(?:from\s*['"]|import\s*['"]|require\(\s*['"])([^'"]+)/g
++  for (const match of source.matchAll(pattern)) {
++    if (match[1].startsWith('.')) imports.push(match[1])
++  }
++  return imports
++}
++
++function resolveImport(from: string, imported: string, files: Set<string>): string | undefined {
++  const base = join(from, imported)
++  const candidates = [base, ...Array.from(SOURCE_EXTENSIONS, extension => `${base}${extension}`), ...Array.from(SOURCE_EXTENSIONS, extension => join(base, `index${extension}`))]
++  return candidates.find(candidate => files.has(candidate))
++}
++
++function approximateTokens(value: string): number {
++  return Math.ceil(value.length / 4)
++}
++
++export async function buildRepoMap(options: RepoMapOptions): Promise<RepoMapResult> {
++  const root = resolve(options.root)
++  const discovered = (options.focusFiles?.length || 0) > 0 || options.root ? await listFiles(root) : []
++  const files = [...new Set(discovered.map(file => file.replaceAll('\\', '/')))]
++  const fileSet = new Set(files)
++  const records = new Map<string, RepoMapFile>()
++  const incoming = new Map<string, number>()
++
++  for (const file of files) {
++    const source = await readFile(join(root, file), 'utf8').catch(() => '')
++    const symbols = symbolsFor(source)
++    records.set(file, { path: file, symbols, score: 1 + symbols.length * 0.25 })
++    const fromDir = file.slice(0, file.lastIndexOf('/'))
++    for (const imported of importedPaths(source)) {
++      const target = resolveImport(fromDir, imported, fileSet)
++      if (target) incoming.set(target, (incoming.get(target) ?? 0) + 1)
++    }
++  }
++
++  const focus = new Set(options.focusFiles?.map(file => file.replaceAll('\\', '/')) ?? [])
++  const ranked = [...records.values()].map(file => ({
++    ...file,
++    score: file.score + (incoming.get(file.path) ?? 0) * 2 + (focus.has(file.path) ? 5 : 0),
++  })).sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
++
++  const maxTokens = options.maxTokens ?? 2500
++  if (!Number.isInteger(maxTokens) || maxTokens < 1) throw new Error('maxTokens must be a positive integer')
++  const sections: string[] = []
++  let tokenCount = 0
++  for (const file of ranked) {
++    if (file.symbols.length === 0) continue
++    const section = [
++      `${file.path}:`,
++      ...file.symbols.flatMap(symbol => ['⋮', `  ${symbol.signature}`]),
++      '⋮',
++    ].join('\n')
++    const sectionTokens = approximateTokens(section)
++    if (tokenCount + sectionTokens > maxTokens) continue
++    sections.push(section)
++    tokenCount += sectionTokens
++  }
++
++  return {
++    map: sections.join('\n'),
++    files: ranked,
++    tokenCount,
++    fileCount: sections.length,
++    totalFileCount: files.length,
++  }
++}
+diff --git a/contrib/freebuff-agent-toolkit/src/storage.ts b/contrib/freebuff-agent-toolkit/src/storage.ts
+new file mode 100644
+index 000000000..1e89379b1
+--- /dev/null
++++ b/contrib/freebuff-agent-toolkit/src/storage.ts
+@@ -0,0 +1,59 @@
++import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises'
++import { homedir } from 'node:os'
++import { dirname, join } from 'node:path'
++import { randomUUID } from 'node:crypto'
++
++export function resolveConfigRoot(env: NodeJS.ProcessEnv = process.env): string {
++  const root = env.FREEBUFF_AGENT_TOOLKIT_HOME?.trim()
++  if (root) return root
++
++  const configHome = env.XDG_CONFIG_HOME?.trim() || join(homedir(), '.config')
++  return join(configHome, 'freebuff', 'agent-toolkit')
++}
++
++export function resolveStateRoot(env: NodeJS.ProcessEnv = process.env): string {
++  const root = env.FREEBUFF_AGENT_TOOLKIT_HOME?.trim()
++  if (root) return join(root, 'state')
++
++  const stateHome = env.XDG_STATE_HOME?.trim() || join(homedir(), '.local', 'state')
++  return join(stateHome, 'freebuff', 'agent-toolkit')
++}
++
++export async function ensureDirectory(path: string): Promise<void> {
++  await mkdir(path, { recursive: true, mode: 0o700 })
++  await chmod(path, 0o700)
++}
++
++export async function writeJsonAtomic(
++  filePath: string,
++  value: unknown,
++): Promise<void> {
++  await ensureDirectory(dirname(filePath))
++  const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`
++  const contents = `${JSON.stringify(value, null, 2)}\n`
++
++  try {
++    await writeFile(temporaryPath, contents, { encoding: 'utf8', mode: 0o600 })
++    await chmod(temporaryPath, 0o600)
++    await rename(temporaryPath, filePath)
++    await chmod(filePath, 0o600)
++  } catch (error) {
++    try {
++      await Bun.file(temporaryPath).delete()
++    } catch {
++      // The original error is more useful than cleanup failures.
++    }
++    throw error
++  }
++}
++
++export async function readJson(filePath: string): Promise<unknown | null> {
++  try {
++    return JSON.parse(await readFile(filePath, 'utf8')) as unknown
++  } catch (error) {
++    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
++      return null
++    }
++    throw error
++  }
++}
+diff --git a/contrib/freebuff-agent-toolkit/src/toolkit.test.ts b/contrib/freebuff-agent-toolkit/src/toolkit.test.ts
+new file mode 100644
+index 000000000..8cad3a720
+--- /dev/null
++++ b/contrib/freebuff-agent-toolkit/src/toolkit.test.ts
+@@ -0,0 +1,95 @@
++import { afterEach, describe, expect, test } from 'bun:test'
++import { chmod, mkdtemp, readFile, rm } from 'node:fs/promises'
++import { join } from 'node:path'
++import { tmpdir } from 'node:os'
++import { AgentRouter } from './agent-routing.js'
++import { BackgroundSessionStore } from './background-sessions.js'
++import { ProfileStore } from './profile-store.js'
++import { buildRepoMap } from './repo-map.js'
++import type { BackgroundSession, ProviderProfile } from './types.js'
++
++const temporaryRoots: string[] = []
++
++async function temporaryRoot(): Promise<string> {
++  const root = await mkdtemp(join(tmpdir(), 'freebuff-agent-toolkit-'))
++  temporaryRoots.push(root)
++  return root
++}
++
++afterEach(async () => {
++  await Promise.all(temporaryRoots.splice(0).map(root => rm(root, { recursive: true, force: true })))
++})
++
++const profiles: ProviderProfile[] = [
++  { name: 'quick', baseUrl: 'https://example.test/v1', model: 'fast-model', apiKeyEnv: 'QUICK_KEY', maxSteps: 12 },
++  { name: 'coding', baseUrl: 'https://example.test/v1', model: 'code-model', apiKeyEnv: 'CODE_KEY', maxSteps: 80 },
++]
++
++describe('ProfileStore', () => {
++  test('stores profile metadata atomically and resolves credentials from env', async () => {
++    const root = await temporaryRoot()
++    const filePath = join(root, 'config', 'profiles.json')
++    const store = new ProfileStore(filePath)
++    await store.save(profiles[1])
++    await store.setActive('coding')
++
++    const resolved = await store.resolve(undefined, { CODE_KEY: 'secret-value' })
++    expect(resolved.apiKey).toBe('secret-value')
++    expect(JSON.parse(await readFile(filePath, 'utf8')).profiles.coding.apiKey).toBeUndefined()
++  })
++
++  test('rejects unsafe profile values', async () => {
++    const root = await temporaryRoot()
++    const store = new ProfileStore(join(root, 'profiles.json'))
++    await expect(store.save({ ...profiles[0], name: '../escape' })).rejects.toThrow()
++    await expect(store.save({ ...profiles[0], baseUrl: 'file:///tmp/model' })).rejects.toThrow()
++  })
++})
++
++describe('BackgroundSessionStore', () => {
++  test('marks dead registered sessions stale and reads bounded logs', async () => {
++    const root = await temporaryRoot()
++    const store = new BackgroundSessionStore(root)
++    const logPath = join(root, 'logs', 'dead.log')
++    await Bun.write(logPath, 'x'.repeat(100))
++    const session: BackgroundSession = {
++      id: 'dead-session',
++      pid: 999999,
++      cwd: root,
++      command: ['fake-command'],
++      logPath,
++      status: 'running',
++      startedAt: new Date(0).toISOString(),
++      updatedAt: new Date(0).toISOString(),
++    }
++    await store.register(session)
++    const listed = await store.list()
++    expect(listed[0].status).toBe('stale')
++    expect((await store.readLog('dead-session', 10)).length).toBeGreaterThan(10)
++  })
++})
++
++describe('buildRepoMap', () => {
++  test('ranks imported definitions and respects a token budget', async () => {
++    const root = await temporaryRoot()
++    await Bun.write(join(root, 'helper.ts'), 'export function helper() { return 1 }\n')
++    await Bun.write(join(root, 'main.ts'), 'import { helper } from "./helper"\nexport function main() { return helper() }\n')
++    const result = await buildRepoMap({ root, maxTokens: 100 })
++    expect(result.totalFileCount).toBe(2)
++    expect(result.files[0].path).toBe('helper.ts')
++    expect(result.map).toContain('helper')
++    expect(result.tokenCount).toBeLessThanOrEqual(100)
++  })
++})
++
++describe('AgentRouter', () => {
++  test('selects an explicit route and keeps fallback order', () => {
++    const router = new AgentRouter(profiles, [
++      { kind: 'implementation', profile: 'coding', maxSteps: 80, fallbacks: ['quick'] },
++    ])
++    const route = router.route({ kind: 'implementation', maxSteps: 20 })
++    expect(route.profile.name).toBe('coding')
++    expect(route.maxSteps).toBe(20)
++    expect(route.fallbacks.map(profile => profile.name)).toEqual(['quick'])
++  })
++})
+diff --git a/contrib/freebuff-agent-toolkit/src/types.ts b/contrib/freebuff-agent-toolkit/src/types.ts
+new file mode 100644
+index 000000000..f04abdcf3
+--- /dev/null
++++ b/contrib/freebuff-agent-toolkit/src/types.ts
+@@ -0,0 +1,91 @@
++export type ProfileName = string
++
++export interface ProviderProfile {
++  name: ProfileName
++  baseUrl: string
++  model: string
++  apiKeyEnv: string
++  maxSteps?: number
++  headers?: Record<string, string>
++}
++
++export interface ProfileDocument {
++  version: 1
++  active?: ProfileName
++  profiles: Record<ProfileName, ProviderProfile>
++  updatedAt: string
++}
++
++export interface ResolvedProviderProfile extends ProviderProfile {
++  apiKey?: string
++}
++
++export type BackgroundSessionStatus =
++  | 'running'
++  | 'exited'
++  | 'failed'
++  | 'killed'
++  | 'stale'
++
++export interface BackgroundSession {
++  id: string
++  name?: string
++  pid: number
++  cwd: string
++  command: string[]
++  logPath: string
++  status: BackgroundSessionStatus
++  startedAt: string
++  updatedAt: string
++  finishedAt?: string
++  exitCode?: number
++  signal?: string
++}
++
++export interface RepoSymbol {
++  name: string
++  line: number
++  signature: string
++}
++
++export interface RepoMapFile {
++  path: string
++  symbols: RepoSymbol[]
++  score: number
++}
++
++export interface RepoMapOptions {
++  root: string
++  maxTokens?: number
++  focusFiles?: string[]
++}
++
++export interface RepoMapResult {
++  map: string
++  files: RepoMapFile[]
++  tokenCount: number
++  fileCount: number
++  totalFileCount: number
++}
++
++export type TaskKind = 'quick' | 'implementation' | 'review' | 'research'
++
++export interface RouteRule {
++  kind: TaskKind
++  profile: ProfileName
++  maxSteps: number
++  fallbacks?: ProfileName[]
++}
++
++export interface RouteRequest {
++  kind: TaskKind
++  preferredProfile?: ProfileName
++  maxSteps?: number
++}
++
++export interface AgentRoute {
++  kind: TaskKind
++  profile: ProviderProfile
++  maxSteps: number
++  fallbacks: ProviderProfile[]
++}

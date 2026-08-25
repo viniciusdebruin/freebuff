@@ -1,0 +1,16 @@
+Commit message:
+Retry transient errors without starting a new session
+
+Description:
+Retry temporary congestion, rate-limit, server, timeout, and network errors
+inside the current agent step. Authentication errors are not retried. The
+retry logic does not create or start a new Freebuff session automatically.
+
+When exactly three follow-up suggestions are shown, display a 60-second timer
+and automatically send all three if the user does not respond. Clicking a
+suggestion cancels the automatic action.
+
+Apply and commit:
+git apply commits/02-retries-followups/changes.patch
+git add cli/src/components/tools/suggest-followups.tsx packages/agent-runtime/src/llm-api/codebuff-web-api.ts packages/agent-runtime/src/prompt-agent-stream.ts
+git commit -m "Retry transient errors without starting a new session"

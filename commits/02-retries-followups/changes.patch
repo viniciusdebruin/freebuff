@@ -1,0 +1,132 @@
+diff --git a/cli/src/components/tools/suggest-followups.tsx b/cli/src/components/tools/suggest-followups.tsx
+index 88fc06077..a009c55aa 100644
+--- a/cli/src/components/tools/suggest-followups.tsx
++++ b/cli/src/components/tools/suggest-followups.tsx
+@@ -4,7 +4,10 @@ import { useCallback, useEffect, useState } from 'react'
+ import { defineToolComponent } from './types'
+ import { useTerminalDimensions } from '../../hooks/use-terminal-dimensions'
+ import { useTheme } from '../../hooks/use-theme'
+-import { getLatestFollowupToolCallId, useChatStore } from '../../state/chat-store'
++import {
++  getLatestFollowupToolCallId,
++  useChatStore,
++} from '../../state/chat-store'
+ import { useFreebuffSessionStore } from '../../state/freebuff-session-store'
+ import { IS_FREEBUFF } from '../../utils/constants'
+ import { Button } from '../button'
+@@ -17,6 +20,8 @@ const MIN_LABEL_COLUMN_WIDTH = 12
+ const MAX_LABEL_COLUMN_WIDTH = 60
+ /** Minimum terminal width to show the prompt description on hover */
+ const MIN_WIDTH_FOR_DESCRIPTION = 80
++/** Automatically choose all followups when the user leaves them untouched. */
++const AUTO_ACCEPT_FOLLOWUPS_MS = 60_000
+ 
+ interface FollowupLineProps {
+   followup: SuggestedFollowup
+@@ -280,6 +285,56 @@ const SuggestFollowupsItem = ({
+ 
+   // Track which item is hovered (for passing to children)
+   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
++  const [autoAcceptSeconds, setAutoAcceptSeconds] = useState<number | null>(
++    null,
++  )
++  const followupSignature = followups
++    .map((followup) => `${followup.label ?? ''}\u0000${followup.prompt}`)
++    .join('\u0001')
++
++  useEffect(() => {
++    if (
++      !isActive ||
++      followups.length !== 3 ||
++      clickedIndices.size > 0 ||
++      isFreebuffSessionOver
++    ) {
++      setAutoAcceptSeconds(null)
++      return
++    }
++
++    setAutoAcceptSeconds(AUTO_ACCEPT_FOLLOWUPS_MS / 1000)
++
++    const countdown = setInterval(() => {
++      setAutoAcceptSeconds((seconds) =>
++        seconds == null ? seconds : Math.max(0, seconds - 1),
++      )
++    }, 1000)
++
++    const autoAccept = setTimeout(() => {
++      // The effect is cancelled as soon as the user clicks a suggestion or
++      // this tool is no longer the active followup set.
++      for (const [index, followup] of followups.entries()) {
++        globalThis.dispatchEvent(
++          new CustomEvent('codebuff:send-followup', {
++            detail: { prompt: followup.prompt, index, toolCallId },
++          }),
++        )
++      }
++      setAutoAcceptSeconds(null)
++    }, AUTO_ACCEPT_FOLLOWUPS_MS)
++
++    return () => {
++      clearInterval(countdown)
++      clearTimeout(autoAccept)
++    }
++  }, [
++    clickedIndices.size,
++    followupSignature,
++    isActive,
++    isFreebuffSessionOver,
++    toolCallId,
++  ])
+ 
+   // For past messages, show collapsed toggle view
+   if (!isActive) {
+@@ -300,6 +355,11 @@ const SuggestFollowupsItem = ({
+   return (
+     <box style={{ flexDirection: 'column' }}>
+       <text style={{ fg: theme.muted }}>Suggested followups:</text>
++      {autoAcceptSeconds != null && (
++        <text style={{ fg: theme.muted }}>
++          Auto-selecting all 3 in {autoAcceptSeconds}s (click one to cancel)
++        </text>
++      )}
+       <box style={{ flexDirection: 'column' }}>
+         {followups.map((followup, index) => (
+           <FollowupLine
+diff --git a/packages/agent-runtime/src/llm-api/codebuff-web-api.ts b/packages/agent-runtime/src/llm-api/codebuff-web-api.ts
+index a4b81c997..18ea2a4fd 100644
+--- a/packages/agent-runtime/src/llm-api/codebuff-web-api.ts
++++ b/packages/agent-runtime/src/llm-api/codebuff-web-api.ts
+@@ -5,7 +5,9 @@ import type { JSONObject } from '@codebuff/common/types/json'
+ import type { Logger } from '@codebuff/common/types/contracts/logger'
+ 
+ const FETCH_TIMEOUT_MS = 30_000
+-const MAX_RETRIES = 3
++// Keep retrying transient capacity/network failures long enough for a busy
++// local session to recover instead of surfacing an avoidable terminal error.
++const MAX_RETRIES = 10
+ const RETRY_BASE_DELAY_MS = 1000
+ const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504])
+ 
+diff --git a/packages/agent-runtime/src/prompt-agent-stream.ts b/packages/agent-runtime/src/prompt-agent-stream.ts
+index ef2eb3a15..ef7632179 100644
+--- a/packages/agent-runtime/src/prompt-agent-stream.ts
++++ b/packages/agent-runtime/src/prompt-agent-stream.ts
+@@ -14,6 +14,9 @@ import type { Message } from '@codebuff/common/types/messages/codebuff-message'
+ import type { OpenRouterProviderOptions } from '@codebuff/common/types/agent-template'
+ import type { ToolSet } from 'ai'
+ 
++/** More patience for transient API congestion before ending an agent step. */
++const LOCAL_STREAM_MAX_RETRIES = 10
++
+ export const getAgentStreamFromTemplate = (params: {
+   agentId?: string
+   apiKey: string
+@@ -91,7 +94,7 @@ export const getAgentStreamFromTemplate = (params: {
+     logger,
+     localAgentTemplates,
+     maxOutputTokens: undefined,
+-    maxRetries: 3,
++    maxRetries: LOCAL_STREAM_MAX_RETRIES,
+     messages,
+     model,
+     runId,

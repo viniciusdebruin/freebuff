@@ -1,0 +1,97 @@
+From ba99c105fd6b2faaed0e8eac4ec77978428009a4 Mon Sep 17 00:00:00 2001
+From: viniciusdebruin <vinicius@debruin.com.br>
+Date: Sun, 23 Aug 2026 13:57:09 -0300
+Subject: [PATCH 11/13] Fix cyclic session resume after session end
+
+
+diff --git a/sdk/src/__tests__/run-state-cyclic.test.ts b/sdk/src/__tests__/run-state-cyclic.test.ts
+new file mode 100644
+index 000000000..7cec8a6a4
+--- /dev/null
++++ b/sdk/src/__tests__/run-state-cyclic.test.ts
+@@ -0,0 +1,53 @@
++import { getInitialSessionState } from '@codebuff/common/types/session-state'
++import { getStubProjectFileContext } from '@codebuff/common/util/file'
++import { describe, expect, it } from 'bun:test'
++
++import {
++  applyOverridesToSessionState,
++  withMessageHistory,
++} from '../run-state'
++
++describe('run-state cloning', () => {
++  it('resumes a session containing cyclic tool schemas', async () => {
++    const state = getInitialSessionState(getStubProjectFileContext())
++    const recursiveSchema: Record<string, unknown> = {}
++    recursiveSchema.self = recursiveSchema
++    state.mainAgentState.toolDefinitions = {
++      gravity_index: {
++        description: undefined,
++        inputSchema: recursiveSchema,
++      },
++    }
++
++    const resumed = await applyOverridesToSessionState(undefined, state, {
++      maxAgentSteps: 12,
++    })
++
++    expect(resumed).not.toBe(state)
++    expect(resumed.mainAgentState).not.toBe(state.mainAgentState)
++    expect(resumed.mainAgentState.stepsRemaining).toBe(12)
++    expect(resumed.mainAgentState.toolDefinitions.gravity_index.inputSchema).not.toBe(
++      state.mainAgentState.toolDefinitions.gravity_index.inputSchema,
++    )
++    const clonedSchema = resumed.mainAgentState.toolDefinitions.gravity_index
++      .inputSchema as { self: unknown }
++    expect(clonedSchema.self).toBe(clonedSchema)
++  })
++
++  it('replays message history without JSON serialization', () => {
++    const state = getInitialSessionState(getStubProjectFileContext())
++    const recursiveSchema: Record<string, unknown> = {}
++    recursiveSchema.self = recursiveSchema
++    ;(state.mainAgentState.toolDefinitions as any).tool = {
++      description: undefined,
++      inputSchema: recursiveSchema,
++    }
++
++    const replayed = withMessageHistory({ runState: { sessionState: state, output: { type: 'lastMessage', value: [] }, traceSessionId: 'trace' }, messages: [] })
++
++    expect(replayed).not.toBe(state)
++    expect(replayed.sessionState?.mainAgentState.toolDefinitions.tool.inputSchema).not.toBe(
++      recursiveSchema,
++    )
++  })
++})
+diff --git a/sdk/src/run-state.ts b/sdk/src/run-state.ts
+index ea0f78bfe..b5dbe0ed9 100644
+--- a/sdk/src/run-state.ts
++++ b/sdk/src/run-state.ts
+@@ -816,8 +816,10 @@ export function withMessageHistory({
+   runState: RunState
+   messages: Message[]
+ }): RunState {
+-  // Deep copy
+-  const newRunState = JSON.parse(JSON.stringify(runState)) as typeof runState
++  // Session state can contain provider/tool schemas with cyclic references
++  // (for example recursive Zod schemas). JSON cloning is therefore unsafe
++  // when a completed session is resumed or replayed.
++  const newRunState = cloneDeep(runState)
+ 
+   if (newRunState.sessionState) {
+     newRunState.sessionState.mainAgentState.messageHistory = messages
+@@ -844,10 +846,10 @@ export async function applyOverridesToSessionState(
+     maxAgentSteps?: number
+   },
+ ): Promise<SessionState> {
+-  // Deep clone to avoid mutating the original session state
+-  const sessionState = JSON.parse(
+-    JSON.stringify(baseSessionState),
+-  ) as SessionState
++  // Deep clone to avoid mutating the original session state. Do not use a
++  // JSON round-trip here: toolDefinitions may contain recursive schemas and
++  // this function is on the continuation path after a session ends.
++  const sessionState = cloneDeep(baseSessionState)
+ 
+   // Apply maxAgentSteps override
+   if (overrides.maxAgentSteps !== undefined) {

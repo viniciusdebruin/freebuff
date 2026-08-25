@@ -1,0 +1,71 @@
+From ac7e82b6e14de1f5665e5c3c6fbbcfc5fccb5316 Mon Sep 17 00:00:00 2001
+From: viniciusdebruin <vinicius@debruin.com.br>
+Date: Sat, 22 Aug 2026 16:01:39 -0300
+Subject: [PATCH 01/13] test Linux baseline binary on CPUs without AVX2
+
+
+diff --git a/CONTRIBUTING_AVX2.md b/CONTRIBUTING_AVX2.md
+new file mode 100644
+index 000000000..37e250023
+--- /dev/null
++++ b/CONTRIBUTING_AVX2.md
+@@ -0,0 +1,20 @@
++# Linux sem AVX2: Freebuff Desktop e CLI
++
++## Reprodução
++
++- Linux x86_64
++- CPU sem `avx2` em `/proc/cpuinfo`
++- Freebuff Desktop 0.0.70: o Bun empacotado encerra com `SIGILL` (código 132)
++- Freebuff CLI 0.0.154: inicia e baixa `freebuff-linux-x64-baseline.tar.gz`
++
++## Resultado
++
++O launcher do CLI já seleciona `linux-x64-baseline` antes de iniciar o
++binário. O teste adicionado em `cli/src/__tests__/release/wrapper-safety.test.ts`
++protege essa seleção contra regressões em Linux x64 sem AVX2.
++
++## Sugestão para o Desktop
++
++Aplicar a mesma seleção de target ao launcher do Desktop ou publicar um
++AppImage Linux baseado no runtime baseline. O AppImage atual inclui um Bun que
++requer AVX2 e encerra antes de iniciar o orquestrador.
+diff --git a/cli/src/__tests__/release/wrapper-safety.test.ts b/cli/src/__tests__/release/wrapper-safety.test.ts
+index aeb0d60c0..06b0a9678 100644
+--- a/cli/src/__tests__/release/wrapper-safety.test.ts
++++ b/cli/src/__tests__/release/wrapper-safety.test.ts
+@@ -166,6 +166,34 @@ describe('shared release launcher safety', () => {
+   const launcherPath = join(repoRoot, 'cli/release-core/launcher.js')
+   const { createLauncher } = require(launcherPath)
+ 
++  test('selects the Linux baseline binary on CPUs without AVX2', () => {
++    if (process.platform !== 'linux' || process.arch !== 'x64') return
++
++    const cpuInfo = readFileSync('/proc/cpuinfo', 'utf8')
++    if (/\bavx2\b/i.test(cpuInfo)) return
++
++    const fixtureRoot = mkdtempSync(join(tmpdir(), 'launcher-baseline-'))
++    try {
++      const launcher = createLauncher({
++        packageName: 'baseline-test',
++        displayName: 'Baseline Test',
++        configDir: fixtureRoot,
++      })
++
++      expect(launcher.__testing.getDefaultTargetKey()).toBe(
++        'linux-x64-baseline',
++      )
++      expect(
++        launcher.__testing.isTargetAllowedForThisMachine('linux-x64-baseline'),
++      ).toBe(true)
++      expect(
++        launcher.__testing.isTargetAllowedForThisMachine('linux-x64'),
++      ).toBe(false)
++    } finally {
++      rmSync(fixtureRoot, { recursive: true, force: true })
++    }
++  })
++
+   test('stages an update before stopping the running process', () => {
+     const source = readFileSync(launcherPath, 'utf8')
+     const updateFunction = source.slice(

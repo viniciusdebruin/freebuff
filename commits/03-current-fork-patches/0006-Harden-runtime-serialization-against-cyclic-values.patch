@@ -1,0 +1,108 @@
+From b734ec01d9982d0b186dcaa17245ef231278464b Mon Sep 17 00:00:00 2001
+From: viniciusdebruin <vinicius@debruin.com.br>
+Date: Sat, 22 Aug 2026 22:41:13 -0300
+Subject: [PATCH 06/13] Harden runtime serialization against cyclic values
+
+
+diff --git a/packages/agent-runtime/src/run-programmatic-step.ts b/packages/agent-runtime/src/run-programmatic-step.ts
+index 2ef5d8ba1..cc7e198db 100644
+--- a/packages/agent-runtime/src/run-programmatic-step.ts
++++ b/packages/agent-runtime/src/run-programmatic-step.ts
+@@ -6,6 +6,7 @@ import { cloneDeep } from 'lodash'
+ import { clearProposedContentForRun } from './tools/handlers/tool/proposed-content-store'
+ import { executeToolCall } from './tools/tool-executor'
+ import { parseTextWithToolCalls } from './util/parse-tool-calls-from-text'
++import { safeJsonStringify } from './util/format-value'
+ 
+ import type { FileProcessingState } from './tools/handlers/tool/write-file'
+ import type { ExecuteToolCallParams } from './tools/tool-executor'
+@@ -270,7 +271,7 @@ export async function runProgrammaticStep(
+       if (!parseResult.success) {
+         throw new Error(
+           `Invalid yield value from handleSteps in agent ${template.id}: ${parseResult.error.message}. ` +
+-            `Received: ${JSON.stringify(result.value)}`,
++            `Received: ${safeJsonStringify(result.value)}`,
+         )
+       }
+ 
+diff --git a/packages/agent-runtime/src/tools/tool-executor.ts b/packages/agent-runtime/src/tools/tool-executor.ts
+index 36c470875..9bf07a32c 100644
+--- a/packages/agent-runtime/src/tools/tool-executor.ts
++++ b/packages/agent-runtime/src/tools/tool-executor.ts
+@@ -635,7 +635,10 @@ export function parseRawCustomToolCall(params: {
+     }
+   }
+ 
+-  const input = JSON.parse(JSON.stringify(parsedInput.input))
++  // The parsed tool input may be augmented by an MCP/custom-tool adapter.
++  // Clone it without JSON serialization so a circular adapter value cannot
++  // terminate the agent before the normal tool-error/retry path runs.
++  const input = cloneDeep(parsedInput.input) as Record<string, any>
+   if (endsAgentStepParam in input) {
+     delete input[endsAgentStepParam]
+   }
+diff --git a/packages/agent-runtime/src/util/format-value.ts b/packages/agent-runtime/src/util/format-value.ts
+index 716ac8d84..ad1d12b57 100644
+--- a/packages/agent-runtime/src/util/format-value.ts
++++ b/packages/agent-runtime/src/util/format-value.ts
+@@ -1,10 +1,13 @@
+-export function formatValueForError(value: unknown, maxLength = 500): string {
+-  let jsonStr: string
++export function safeJsonStringify(value: unknown): string {
+   try {
+-    jsonStr = JSON.stringify(value, null, 2) ?? 'undefined'
++    return JSON.stringify(value) ?? 'undefined'
+   } catch {
+-    jsonStr = '[unserializable value: circular structure]'
++    return '[unserializable value: circular structure]'
+   }
++}
++
++export function formatValueForError(value: unknown, maxLength = 500): string {
++  const jsonStr = safeJsonStringify(value)
+   const truncated =
+     jsonStr.length > maxLength
+       ? jsonStr.slice(0, maxLength) + '...(truncated)'
+diff --git a/packages/agent-runtime/src/util/messages.ts b/packages/agent-runtime/src/util/messages.ts
+index 88192aa6d..312cd567f 100644
+--- a/packages/agent-runtime/src/util/messages.ts
++++ b/packages/agent-runtime/src/util/messages.ts
+@@ -8,6 +8,7 @@ import { cloneDeep, isEqual } from 'lodash'
+ 
+ import { simplifyTerminalCommandResults } from './simplify-tool-results'
+ import { countTokensMessages } from './token-counter'
++import { safeJsonStringify } from './format-value'
+ 
+ import type { System } from '../llm-api/claude'
+ import type {
+@@ -57,7 +58,7 @@ export function buildUserMessageContent(
+   // Only prompt/params, combine and return as simple text
+   const textParts = buildArray([
+     promptHasNonWhitespaceText ? prompt : undefined,
+-    params && JSON.stringify(params, null, 2),
++    params && safeJsonStringify(params),
+   ])
+   return [
+     {
+diff --git a/packages/agent-runtime/src/util/token-counter.ts b/packages/agent-runtime/src/util/token-counter.ts
+index c24712920..2555b51db 100644
+--- a/packages/agent-runtime/src/util/token-counter.ts
++++ b/packages/agent-runtime/src/util/token-counter.ts
+@@ -1,6 +1,8 @@
+ import { LRUCache } from '@codebuff/common/util/lru-cache'
+ import { encode } from 'gpt-tokenizer/esm/model/gpt-4o'
+ 
++import { safeJsonStringify } from './format-value'
++
+ import type { Message } from '@codebuff/common/types/messages/codebuff-message'
+ 
+ const ANTHROPIC_TOKEN_FUDGE_FACTOR = 1.35
+@@ -41,7 +43,7 @@ export function countTokens(text: string): number {
+ export function countTokensJson(value: unknown): number {
+   // JSON.stringify(undefined) returns undefined; fall back to '' so countTokens
+   // always gets a string.
+-  return countTokens(JSON.stringify(value) ?? '')
++  return countTokens(safeJsonStringify(value))
+ }
+ 
+ /**

@@ -1,0 +1,78 @@
+From c6453d37c64af24a31f17e81beeb5acf440ebe66 Mon Sep 17 00:00:00 2001
+From: viniciusdebruin <vinicius@debruin.com.br>
+Date: Sat, 22 Aug 2026 19:50:30 -0300
+Subject: [PATCH 04/13] Recover from cyclic provider stream errors
+
+
+diff --git a/sdk/src/impl/llm.ts b/sdk/src/impl/llm.ts
+index 2ce4cdb44..220ca91c2 100644
+--- a/sdk/src/impl/llm.ts
++++ b/sdk/src/impl/llm.ts
+@@ -65,6 +65,31 @@ function calculateUsedCredits(params: { costDollars: number }): number {
+   return Math.round(costDollars * (1 + PROFIT_MARGIN) * 100)
+ }
+ 
++function formatStreamErrorMessage(error: unknown): {
++  message: string
++  serializationFailed: boolean
++} {
++  if (error instanceof Error) {
++    return { message: error.message, serializationFailed: false }
++  }
++  if (typeof error === 'string') {
++    return { message: error, serializationFailed: false }
++  }
++
++  try {
++    return {
++      message: JSON.stringify(error) ?? String(error),
++      serializationFailed: false,
++    }
++  } catch {
++    return {
++      message:
++        'The model provider returned an unserializable error. Retry this step without starting a new session.',
++      serializationFailed: true,
++    }
++  }
++}
++
+ export function getProviderOptions(params: {
+   model: string
+   runId: string
+@@ -487,14 +512,29 @@ export async function* promptAiSdkStream(
+       const errorBody = APICallError.isInstance(chunkValue.error)
+         ? chunkValue.error.responseBody
+         : undefined
+-      const mainErrorMessage =
+-        chunkValue.error instanceof Error
+-          ? chunkValue.error.message
+-          : typeof chunkValue.error === 'string'
+-            ? chunkValue.error
+-            : JSON.stringify(chunkValue.error)
++      const { message: mainErrorMessage, serializationFailed } =
++        formatStreamErrorMessage(chunkValue.error)
+       const errorMessage = buildArray([mainErrorMessage, errorBody]).join('\n')
+ 
++      // Some providers emit an error object with request/response references.
++      // Serializing that object used to throw here, masking the original error
++      // and terminating the session before the agent retry path could run.
++      // Pass a safe message through the normal tool-error channel instead.
++      if (serializationFailed) {
++        logger.warn(
++          {
++            error: getErrorObject(chunkValue.error),
++            model: params.model,
++          },
++          'Unserializable AI SDK stream error; passing through for same-session retry',
++        )
++        yield {
++          type: 'error',
++          message: errorMessage,
++        }
++        return promptSuccess(null)
++      }
++
+       // Pass these errors back to the agent so it can see what went wrong and retry.
+       // Note: If you find any other error types that should be passed through to the agent, add them here!
+       if (

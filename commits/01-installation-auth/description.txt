@@ -1,0 +1,13 @@
+Commit message:
+Fix Freebuff installation authentication loop
+
+Description:
+Freebuff login tokens are issued by the Freebuff authentication flow and are
+not valid on Codebuff's /api/v1/me validation endpoint. Skip that incompatible
+check in Freebuff mode so an installed Freebuff binary starts with a valid
+Freebuff login instead of repeatedly asking the user to log in.
+
+Apply and commit:
+git apply commits/01-installation-auth/changes.patch
+git add cli/src/hooks/use-auth-query.ts
+git commit -m "Fix Freebuff installation authentication loop"
