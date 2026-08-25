@@ -28,6 +28,105 @@ freebuff
 
 Then describe what you want. Freebuff finds the relevant files, makes changes, and runs the checks that matter for your project.
 
+## Install via npm
+
+The published `freebuff` package requires Node.js 16 or newer and npm. Check
+that both tools are available, then install the CLI globally:
+
+### Linux and macOS
+
+```bash
+node --version
+npm --version
+npm install --global freebuff
+freebuff --version
+
+mkdir -p "$HOME/projects/freebuff-test"
+cd "$HOME/projects/freebuff-test"
+freebuff login
+freebuff
+```
+
+If npm reports a global-directory permission error, configure a user-owned npm
+prefix and open a new terminal:
+
+```bash
+mkdir -p "$HOME/.local/npm"
+npm config set prefix "$HOME/.local/npm"
+export PATH="$HOME/.local/npm/bin:$PATH"
+npm install --global freebuff
+freebuff --version
+```
+
+### Windows PowerShell
+
+```powershell
+node --version
+npm --version
+npm install --global freebuff
+freebuff --version
+
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\Projects\freebuff-test" | Out-Null
+Set-Location "$env:USERPROFILE\Projects\freebuff-test"
+freebuff login
+freebuff
+```
+
+### Windows Command Prompt
+
+```bat
+node --version
+npm --version
+npm install --global freebuff
+freebuff --version
+
+if not exist "%USERPROFILE%\Projects\freebuff-test" mkdir "%USERPROFILE%\Projects\freebuff-test"
+cd /d "%USERPROFILE%\Projects\freebuff-test"
+freebuff login
+freebuff
+```
+
+The first login opens a browser. Complete the login there and return to the
+terminal. Use `freebuff --cwd "C:\path\to\project"` on Windows or
+`freebuff --cwd "/path/to/project"` on Linux/macOS to start in a specific
+project.
+
+## Install this fork's `main` branch
+
+The npm command above installs the package currently published to npm. To
+install the exact source and installer from this fork's `main` branch, use the
+repository installer instead:
+
+### Linux and macOS
+
+```bash
+git clone https://github.com/viniciusdebruin/freebuff.git
+cd freebuff
+chmod +x install/install-unix.sh
+./install/install-unix.sh
+export PATH="$HOME/.local/bin:$PATH"
+freebuff --version
+cd "$HOME/projects/freebuff-test"
+freebuff login
+freebuff
+```
+
+### Windows Command Prompt
+
+```bat
+git clone https://github.com/viniciusdebruin/freebuff.git "%USERPROFILE%\freebuff"
+cd /d "%USERPROFILE%\freebuff"
+call install\install-windows.bat
+set "PATH=%LOCALAPPDATA%\Freebuff\bin;%PATH%"
+freebuff --version
+cd /d "%USERPROFILE%\Projects\freebuff-test"
+freebuff login
+freebuff
+```
+
+The source installer builds the fork locally and embeds the production API
+URLs. It does not copy the login profile from another computer.
+
 ## Models
 
 Freebuff includes a curated model catalog. The regular picker currently offers:

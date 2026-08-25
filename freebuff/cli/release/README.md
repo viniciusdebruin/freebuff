@@ -7,15 +7,49 @@ An AI coding agent that runs in your terminal — describe what you want, and Fr
 ## Install
 
 ```bash
-npm install -g freebuff
+node --version
+npm --version
+npm install --global freebuff
+freebuff --version
 ```
 
 ## Usage
 
 ```bash
-cd ~/my-project
+mkdir -p "$HOME/projects/freebuff-test"
+cd "$HOME/projects/freebuff-test"
+freebuff login
 freebuff
 ```
+
+On Windows PowerShell, use:
+
+```powershell
+node --version
+npm --version
+npm install --global freebuff
+freebuff --version
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\Projects\freebuff-test" | Out-Null
+Set-Location "$env:USERPROFILE\Projects\freebuff-test"
+freebuff login
+freebuff
+```
+
+On Windows Command Prompt, use:
+
+```bat
+node --version
+npm --version
+npm install --global freebuff
+freebuff --version
+if not exist "%USERPROFILE%\Projects\freebuff-test" mkdir "%USERPROFILE%\Projects\freebuff-test"
+cd /d "%USERPROFILE%\Projects\freebuff-test"
+freebuff login
+freebuff
+```
+
+The npm package is the published release. To install the exact fork `main`
+branch, use the repository installers in `install/` from the source checkout.
 
 ## Why Freebuff?
 
