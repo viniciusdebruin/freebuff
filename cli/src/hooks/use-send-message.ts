@@ -250,7 +250,13 @@ export const useSendMessage = ({
   )
 
   const sendMessage = useCallback<SendMessageFn>(
-    async ({ content, agentMode, postUserMessage, attachments }) => {
+    async ({
+      content,
+      agentMode,
+      executionMode = 'default',
+      postUserMessage,
+      attachments,
+    }) => {
       // CRITICAL: Set chain in progress immediately (synchronously) before any async work.
       // This ensures the router can detect that we're busy and queue subsequent messages.
       // Set the ref directly first to guarantee immediate visibility to other code paths,
@@ -589,6 +595,7 @@ export const useSendMessage = ({
             IS_FREEBUFF && freebuffInstanceId
               ? { freebuff_instance_id: freebuffInstanceId }
               : undefined,
+          executionMode,
           onStateSnapshot: (snapshot) => {
             latestRunStateSnapshot = snapshot
             // Don't persist once the run is aborted or the user has switched

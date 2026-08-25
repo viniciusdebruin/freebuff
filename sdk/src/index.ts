@@ -20,6 +20,12 @@ export type {
   TextContent,
   ImageContent,
 } from './run'
+export { createReadOnlyToolCallPolicy } from './tool-call-policy'
+export type {
+  ToolCallPolicy,
+  ToolCallPolicyContext,
+  ToolCallPolicyDecision,
+} from './tool-call-policy'
 export type { TraceWriter } from '@codebuff/common/types/contracts/trace'
 export { buildUserMessageContent } from '@codebuff/agent-runtime/util/messages'
 // Agent type exports

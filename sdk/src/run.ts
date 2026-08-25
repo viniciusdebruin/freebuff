@@ -55,6 +55,7 @@ import type { TerminalCommandBroker } from './tools/run-terminal-command'
 import type { CustomToolDefinition } from './custom-tool'
 import type { RunState } from './run-state'
 import type { FileFilter } from './tools/read-files'
+import type { ToolCallPolicy } from './tool-call-policy'
 import type { ServerAction } from '@codebuff/common/actions'
 import type { FileReadWindow } from '@codebuff/common/types/contracts/client'
 import type { AgentDefinition } from '@codebuff/common/templates/initial-agents-dir/types/agent-definition'
@@ -222,6 +223,8 @@ export type RunOptions = {
   onUsageIncomplete?: () => void
   /** Mechanical context compaction performed by the root agent runtime. */
   onCompaction?: (data: ContextCompactionData) => void
+  /** Optional per-run policy evaluated immediately before any tool executes. */
+  toolCallPolicy?: ToolCallPolicy
 }
 
 /** How often onStateSnapshot fires while a run is in flight. */
@@ -411,6 +414,7 @@ async function runOnce({
   onUsage,
   onUsageIncomplete,
   onCompaction,
+  toolCallPolicy,
 }: RunExecutionOptions): Promise<RunState> {
   const fsSourceValue = typeof fsSource === 'function' ? fsSource() : fsSource
   const fs = await fsSourceValue
@@ -619,6 +623,7 @@ async function runOnce({
         terminalCommandBroker,
         apiKey,
         signal,
+        toolCallPolicy,
       })
     },
     requestMcpToolData: async ({ mcpConfig, toolNames }) => {
@@ -978,6 +983,7 @@ async function handleToolCall({
   terminalCommandBroker?: TerminalCommandBroker
   apiKey: string
   signal?: AbortSignal
+  toolCallPolicy?: ToolCallPolicy
 }): Promise<{ output: ToolResultOutput[] }> {
   const toolName = action.toolName
   const input = action.input
@@ -992,6 +998,38 @@ async function handleToolCall({
           },
         },
       ],
+    }
+  }
+
+  if (toolCallPolicy) {
+    let decision: Awaited<ReturnType<ToolCallPolicy>>
+    try {
+      decision = await toolCallPolicy({
+        requestId: action.requestId,
+        userInputId: action.userInputId,
+        toolName,
+        input: input as Record<string, unknown>,
+        isMcpTool: Boolean(action.mcpConfig),
+      })
+    } catch {
+      decision = {
+        action: 'deny',
+        reason: 'Tool call denied because the safety policy failed closed.',
+      }
+    }
+
+    if (decision.action !== 'allow') {
+      return {
+        output: [
+          {
+            type: 'json',
+            value: {
+              errorMessage:
+                decision.reason ?? 'Tool call denied by the safety policy.',
+            },
+          },
+        ],
+      }
     }
   }
 

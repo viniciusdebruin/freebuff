@@ -340,7 +340,11 @@ export async function routeUserPrompt(
     setInputFocused(true)
     inputRef.current?.focus()
 
-    sendMessage({ content: buildPlanPrompt(trimmed), agentMode })
+    sendMessage({
+      content: buildPlanPrompt(trimmed),
+      agentMode,
+      executionMode: 'plan',
+    })
     setTimeout(() => {
       scrollToLatest()
     }, 0)

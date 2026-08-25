@@ -16,6 +16,7 @@ import type {
   MessageContent,
   RunState,
 } from '@codebuff/sdk'
+import { createReadOnlyToolCallPolicy } from '@codebuff/sdk'
 
 export type CreateRunConfigParams = {
   logger: Logger
@@ -30,6 +31,8 @@ export type CreateRunConfigParams = {
   extraCodebuffMetadata?: Record<string, string>
   /** Periodic in-flight RunState checkpoints (see RunOptions.onStateSnapshot). */
   onStateSnapshot?: (runState: RunState) => void
+  /** Restrict the run to reversible/read-only tools when planning. */
+  executionMode?: 'default' | 'plan'
 }
 
 const SENSITIVE_EXTENSIONS = new Set([
@@ -97,6 +100,7 @@ export const createRunConfig = (params: CreateRunConfigParams) => {
     costMode,
     extraCodebuffMetadata,
     onStateSnapshot,
+    executionMode = 'default',
   } = params
 
   return {
@@ -113,6 +117,8 @@ export const createRunConfig = (params: CreateRunConfigParams) => {
     costMode,
     extraCodebuffMetadata,
     onStateSnapshot,
+    toolCallPolicy:
+      executionMode === 'plan' ? createReadOnlyToolCallPolicy() : undefined,
     fileFilter: ((filePath: string) => {
       if (isSensitiveFile(filePath)) return { status: 'blocked' }
       return { status: 'allow' }

@@ -7,6 +7,7 @@ export type PostUserMessageFn = (prev: ChatMessage[]) => ChatMessage[]
 export type SendMessageFn = (params: {
   content: string
   agentMode: AgentMode
+  executionMode?: 'default' | 'plan'
   postUserMessage?: PostUserMessageFn
   attachments?: PendingAttachment[]
 }) => Promise<void>
