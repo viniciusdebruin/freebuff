@@ -56,9 +56,10 @@ describe('base3 CLI roots', () => {
       expect(agent.windowedFileReads).toBe(true)
       // Mechanical compaction in-process, instead of spawning context-pruner.
       expect(agent.compactContext).toBe(true)
-      // Single loop: no subagents at all, which is what the harness IS.
-      expect(agent.spawnableAgents ?? []).toEqual([])
-      expect(agent.toolNames ?? []).not.toContain('spawn_agents')
+      // The root is the Developer role and always has the Tester + Critic pair.
+      expect(agent.spawnableAgents ?? []).toContain('basher')
+      expect(agent.spawnableAgents ?? []).toHaveLength(2)
+      expect(agent.toolNames ?? []).toContain('spawn_agents')
       // No per-turn instructions prompt: re-injecting one after every user
       // message breaks the prompt cache the harness is built to keep warm.
       expect(agent.instructionsPrompt).toBeUndefined()

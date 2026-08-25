@@ -973,6 +973,7 @@ async function handleToolCall({
   terminalCommandBroker,
   apiKey,
   signal,
+  toolCallPolicy,
 }: {
   action: ServerAction<'tool-call-request'>
   overrides: NonNullable<CodebuffClientOptions['overrideTools']>

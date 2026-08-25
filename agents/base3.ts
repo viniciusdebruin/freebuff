@@ -5,6 +5,7 @@ import {
   publisher,
   SKILL_DISCOVERY_GUIDANCE,
 } from './constants'
+import { FREEBUFF_REVIEWER_AGENT_ID_BY_MODEL } from '@codebuff/common/constants/free-agents'
 import {
   PLACEHOLDER,
   type SecretAgentDefinition,
@@ -59,6 +60,16 @@ ${PLACEHOLDER.KNOWLEDGE_FILES_CONTENTS}
   }
 }
 
+const DEFAULT_TEAM_CRITIC_AGENT_ID = 'code-reviewer-deepseek-flash'
+
+function getTeamCriticAgentId(
+  model: SecretAgentDefinition['model'],
+  isFreebuff: boolean,
+): string {
+  if (!isFreebuff) return 'code-reviewer'
+  return FREEBUFF_REVIEWER_AGENT_ID_BY_MODEL[model] ?? DEFAULT_TEAM_CRITIC_AGENT_ID
+}
+
 /**
  * The CLI's own base3 roots — Codebuff's DEFAULT and LITE modes, and every
  * Freebuff model the picker offers.
@@ -90,6 +101,7 @@ export function createBase3CliRoot(
 ): Omit<SecretAgentDefinition, 'id'> {
   const { model = OPUS_MODEL, isFreebuff = false, noAskUser = false } = options
   const base3 = createBase3(model)
+  const teamCriticAgentId = getTeamCriticAgentId(model, isFreebuff)
 
   const root: Omit<SecretAgentDefinition, 'id'> = {
     ...base3,
@@ -112,6 +124,7 @@ export function createBase3CliRoot(
       'glob',
       'list_directory',
       'write_todos',
+      'spawn_agents',
       'web_search',
       'read_url',
       'ask_user',
@@ -120,8 +133,9 @@ export function createBase3CliRoot(
       'render_ui',
       'skill',
     ],
+    spawnableAgents: ['basher', teamCriticAgentId],
     systemPrompt: `${base3.systemPrompt}
-${buildCliAppendix({ isFreebuff, model, noAskUser })}`,
+${buildCliAppendix({ isFreebuff, model, noAskUser, teamCriticAgentId })}`,
   }
 
   if (!noAskUser) return root
@@ -141,10 +155,12 @@ function buildCliAppendix({
   isFreebuff,
   model,
   noAskUser = false,
+  teamCriticAgentId,
 }: {
   isFreebuff: boolean
   model: SecretAgentDefinition['model']
   noAskUser?: boolean
+  teamCriticAgentId: string
 }): string {
   return `
 # Working with the user
@@ -157,6 +173,24 @@ ${
 }
 ${gravityIndexGuidance()}
 ${SKILL_DISCOVERY_GUIDANCE}
+
+# Mandatory three-role execution cycle
+
+For every implementation request, keep this quality loop until it is genuinely finished:
+
+1. **Developer:** you are the primary developer. Gather context, implement the change, and fix issues found by the other roles.
+2. **Tester:** after implementation, spawn exactly one \`basher\` as the tester with the project's real typecheck/test/lint command. The tester may report PASS only when the command exits successfully and there are no errors, failures, analyzer issues, or unverified required checks.
+3. **Critic:** after the tester, spawn exactly one \`${teamCriticAgentId}\` as the critic. The critic may approve only when the result is functional, coherent, accessible, and visually correct for the existing project. If it finds a problem, fix it and run the tester and critic again.
+
+Do not stop while the tester or critic reports an unresolved problem. If the model or project cannot spawn subagents, perform the tester and critic roles yourself in sequence; never wait indefinitely for an unavailable agent.
+
+${
+  noAskUser
+    ? ''
+    : `# Non-blocking decisions
+
+Use \`ask_user\` only when human input is genuinely necessary. The CLI automatically resolves an unanswered decision after 30 seconds: multi-select questions receive every option, while single-select questions are returned as skipped. Treat that result as a signal to judge the safest and most precise answer yourself and continue the work; never wait for the human forever.`
+}
 
 # ${isFreebuff ? 'Freebuff' : 'Codebuff'} Meta-information
 

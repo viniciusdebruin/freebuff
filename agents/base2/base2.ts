@@ -200,7 +200,7 @@ ${
   noAskUser
     ? ''
     : `
-- **Ask the user about important decisions or guidance using the ask_user tool:** Use the ask_user tool to collaborate with the user to acheive the best possible result! Prefer to gather context first before asking questions.`
+- **Ask the user only when necessary:** Use the ask_user tool for genuinely important human decisions. The CLI automatically resolves an unanswered decision after 30 seconds: multi-select questions receive every option, while single-select questions are returned as skipped. Treat that result as a signal to judge the safest and most precise answer yourself and continue; never wait for the user forever.`
 }
 - **Be careful with terminal commands:** Be careful about instructing subagents to run terminal commands that could be destructive or have effects that are hard to undo (e.g. git push, git commit, running any scripts -- especially ones that could alter production environments (!), installing packages globally, etc). Don't run any of these effectful commands unless the user explicitly asks you to.
 - **Do what the user asks:** If the user asks you to do something, even running a risky terminal command, do it.
@@ -504,7 +504,23 @@ function buildImplementationInstructionsPrompt({
   noReview: boolean
   leanCodeReviewerAgentId: string
 }) {
+  const teamCriticAgentId = isLean && !noReview
+    ? leanCodeReviewerAgentId
+    : isMax
+      ? 'code-reviewer-multi-prompt'
+      : 'code-reviewer'
+
   return `Act as a helpful assistant and freely respond to the user's request however would be most helpful to the user. Use your judgement to orchestrate the completion of the user's request using your specialized sub-agents and tools as needed. Take your time and be comprehensive. Don't surprise the user. For example, don't modify files if the user has not asked you to do so at least implicitly.
+
+## Mandatory three-role quality cycle
+
+For every implementation request, keep this cycle until it is genuinely finished:
+
+1. **Developer:** own the implementation and fix all issues found by the other roles.
+2. **Tester:** run a focused tester pass through the \`basher\` agent using the project's real typecheck/test/lint command. The tester may report PASS only when the command exits successfully and there are no errors, failures, analyzer issues, or unverified required checks.
+3. **Critic:** run a critical review through the \`${teamCriticAgentId}\` agent after testing. The critic may approve only when the result is functional, coherent, accessible, and visually correct. Fix every finding, then run the tester and critic again.
+
+If subagents are unavailable, perform the tester and critic roles yourself in sequence. Never stop or wait indefinitely because a role cannot be spawned.
 
 ## Example response
 
@@ -515,7 +531,7 @@ ${buildArray(
   isMax &&
     `- Important: Read as many files as could possibly be relevant to the task over several steps to improve your understanding of the user's request and produce the best possible code changes. Find more examples within the codebase similar to the user's request, dependencies that help with understanding how things work, tests, etc. This is frequently 12-20 files, depending on the task.`,
   !noAskUser &&
-    'After getting context on the user request from the codebase or from research, use the ask_user tool to ask the user for important clarifications on their request or alternate implementation strategies. You should skip this step if the choice is obvious -- only ask the user if you need their help making the best choice.',
+    'After getting context on the user request from the codebase or from research, use ask_user only for a genuinely necessary human decision. If it times out, use the automatic result to judge and continue without waiting.',
   (isDefault || isMax || isLean) &&
     `- For any task requiring 3+ steps, use the write_todos tool to write out your step-by-step implementation plan. Include ALL of the applicable tasks in the list.${isFast || noReview ? '' : ' You should include a step to review the changes after you have implemented the changes.'}:${hasNoValidation ? '' : ' You should include at least one step to validate/test your changes: be specific about whether to typecheck, run tests, run lints, etc.'} You may be able to do reviewing and validation in parallel in the same step. Skip write_todos for simple tasks like quick edits or answering questions.`,
   `- ${THINKER_SPAWN_LIMIT}`,
