@@ -196,6 +196,8 @@ const MAX_DISCOVERED_PROJECT_READ_BYTES = 1_000_000
  *  memory. Downstream prompt building keeps only the first ~30KB, so anything
  *  past this cap is discarded work; the child is killed once it's reached. */
 const MAX_SUBPROCESS_OUTPUT_CHARS = 10_000_000
+/** Git metadata must never hold session initialization indefinitely. */
+const GIT_COMMAND_TIMEOUT_MS = 30_000
 const SUBPROCESS_TRUNCATION_MARKER = '\n[output truncated]'
 
 async function computeProjectIndex(params: ProjectIndexInput): Promise<{
@@ -309,11 +311,29 @@ function getFileSize(stats: Awaited<ReturnType<CodebuffFileSystem['stat']>>) {
 function childProcessToPromise(
   proc: ReturnType<CodebuffSpawn>,
   maxOutputChars: number = MAX_SUBPROCESS_OUTPUT_CHARS,
+  timeoutMs?: number,
 ): Promise<{ stdout: string; stderr: string; truncated: boolean }> {
   return new Promise((resolve, reject) => {
     let stdout = ''
     let stderr = ''
     let truncated = false
+    let settled = false
+    const timeout =
+      timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            if (settled) return
+            settled = true
+            proc.kill()
+            reject(new Error(`Command timed out after ${timeoutMs}ms`))
+          }, timeoutMs)
+
+    const finish = (callback: () => void) => {
+      if (settled) return
+      settled = true
+      if (timeout !== undefined) clearTimeout(timeout)
+      callback()
+    }
 
     const collect = (existing: string, data: Buffer): string => {
       if (truncated) return existing
@@ -336,13 +356,13 @@ function childProcessToPromise(
       // A kill we issued at the cap exits nonzero; that must not reject, or
       // the callers' catch-to-empty would discard the collected prefix.
       if (code === 0 || truncated) {
-        resolve({ stdout, stderr, truncated })
+        finish(() => resolve({ stdout, stderr, truncated }))
       } else {
-        reject(new Error(`Command exited with code ${code}`))
+        finish(() => reject(new Error(`Command exited with code ${code}`)))
       }
     })
 
-    proc.on('error', reject)
+    proc.on('error', (error) => finish(() => reject(error)))
   })
 }
 
@@ -355,6 +375,8 @@ export async function getGitChanges(params: {
   cwd: string
   spawn: CodebuffSpawn
   logger: Logger
+  /** Optional short timeout used by tests and embedders. */
+  timeoutMs?: number
 }): Promise<{
   status: string
   diff: string
@@ -362,6 +384,7 @@ export async function getGitChanges(params: {
   lastCommitMessages: string
 }> {
   const { cwd, spawn, logger } = params
+  const timeoutMs = params.timeoutMs ?? GIT_COMMAND_TIMEOUT_MS
 
   const stdoutOf =
     (command: string) =>
@@ -375,14 +398,22 @@ export async function getGitChanges(params: {
       return stdout
     }
 
-  const status = childProcessToPromise(spawn('git', ['status'], { cwd }))
+  const status = childProcessToPromise(
+    spawn('git', ['status'], { cwd }),
+    MAX_SUBPROCESS_OUTPUT_CHARS,
+    timeoutMs,
+  )
     .then(stdoutOf('git status'))
     .catch((error) => {
       logger.debug?.({ error }, 'Failed to get git status')
       return ''
     })
 
-  const diff = childProcessToPromise(spawn('git', ['diff'], { cwd }))
+  const diff = childProcessToPromise(
+    spawn('git', ['diff'], { cwd }),
+    MAX_SUBPROCESS_OUTPUT_CHARS,
+    timeoutMs,
+  )
     .then(stdoutOf('git diff'))
     .catch((error) => {
       logger.debug?.({ error }, 'Failed to get git diff')
@@ -391,6 +422,8 @@ export async function getGitChanges(params: {
 
   const diffCached = childProcessToPromise(
     spawn('git', ['diff', '--cached'], { cwd }),
+    MAX_SUBPROCESS_OUTPUT_CHARS,
+    timeoutMs,
   )
     .then(stdoutOf('git diff --cached'))
     .catch((error) => {
@@ -400,6 +433,8 @@ export async function getGitChanges(params: {
 
   const lastCommitMessages = childProcessToPromise(
     spawn('git', ['shortlog', 'HEAD~10..HEAD'], { cwd }),
+    MAX_SUBPROCESS_OUTPUT_CHARS,
+    timeoutMs,
   )
     .then(({ stdout }) =>
       stdout

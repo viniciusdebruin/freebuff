@@ -42,6 +42,16 @@ function makeSpawn(outputs: Record<string, string>): CodebuffSpawn {
   }) as CodebuffSpawn
 }
 
+function makeHangingSpawn(): CodebuffSpawn {
+  return (() => {
+    const proc = new EventEmitter() as any
+    proc.stdout = new EventEmitter()
+    proc.stderr = new EventEmitter()
+    proc.kill = () => true
+    return proc
+  }) as CodebuffSpawn
+}
+
 describe('getGitChanges', () => {
   it('returns full output when under the cap', async () => {
     const events: Array<{ data: unknown; msg?: string }> = []
@@ -88,5 +98,24 @@ describe('getGitChanges', () => {
     )
     expect(truncationLogs.length).toBe(1)
     expect((truncationLogs[0]!.data as any).command).toBe('git diff')
+  })
+
+  it('does not wait forever for a git child process', async () => {
+    const events: Array<{ data: unknown; msg?: string }> = []
+
+    const result = await getGitChanges({
+      cwd: '/repo',
+      spawn: makeHangingSpawn(),
+      logger: makeLogger(events),
+      timeoutMs: 5,
+    })
+
+    expect(result.status).toBe('')
+    expect(result.diff).toBe('')
+    expect(result.diffCached).toBe('')
+    expect(result.lastCommitMessages).toBe('')
+    expect(
+      events.filter((event) => event.msg?.startsWith('Failed to get')).length,
+    ).toBe(4)
   })
 })

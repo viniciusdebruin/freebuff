@@ -159,6 +159,47 @@ describe('OpenAICompatibleChatLanguageModel doStream', () => {
     expect(finishPartOf(parts).finishReason).toBe('error')
   })
 
+  it('preserves provider detail and status from a mid-stream error', async () => {
+    const parts = await streamParts(
+      sseResponse([
+        JSON.stringify({
+          id: 'gen-2',
+          object: 'chat.completion.chunk',
+          created: 1,
+          model: 'deepseek/deepseek-v4-flash',
+          provider: 'DeepSeek',
+          choices: [],
+          error: {
+            code: 429,
+            message: 'Provider returned error',
+            metadata: {
+              raw: 'deepseek-v4-flash is temporarily rate-limited upstream.',
+              provider_name: 'DeepSeek',
+            },
+          },
+        }),
+      ]),
+    )
+
+    const errorPart = parts.find((part) => part.type === 'error')
+    if (!errorPart || errorPart.type !== 'error') {
+      throw new Error('stream swallowed the provider error')
+    }
+    const apiError = errorPart.error as {
+      message: string
+      statusCode?: number
+      responseBody?: string
+    }
+    expect(apiError.message).toBe(
+      'Provider returned error [DeepSeek: deepseek-v4-flash is temporarily rate-limited upstream.]',
+    )
+    expect(apiError.statusCode).toBe(429)
+    expect(JSON.parse(apiError.responseBody ?? '{}').error.message).toBe(
+      apiError.message,
+    )
+    expect(finishPartOf(parts).finishReason).toBe('error')
+  })
+
   it('assembles streamed reasoning_details onto the reasoning-end part', async () => {
     const parts = await streamParts(
       sseResponse([
