@@ -5,9 +5,8 @@ import { IS_FREEBUFF } from '../utils/constants'
 // Get the website URL from environment or use default
 export const WEBSITE_URL = env.NEXT_PUBLIC_CODEBUFF_APP_URL
 
-// The session API validates tokens on the canonical Codebuff host. Generate
-// the CLI login code there as well; using freebuff.com here creates a token
-// that later fails with 401 when the CLI opens the Freebuff session.
+// The session API validates CLI tokens on the canonical Codebuff host.
+// Generate the token there too, otherwise the Freebuff session request gets 401.
 const FREEBUFF_WEB_URL = IS_DEV
   ? 'http://localhost:3002'
   : WEBSITE_URL
