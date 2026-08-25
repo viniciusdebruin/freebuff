@@ -25,6 +25,43 @@ interface TerminalCommandDisplayProps {
 }
 
 /**
+ * Hide only the known non-actionable AI SDK compatibility warning emitted by
+ * the Freebuff Mimo model. Other stderr, including product notices and ads,
+ * remains visible to the user.
+ */
+export const filterNonActionableTerminalWarnings = (output: string): string => {
+  const lines = output.split(/\r?\n/)
+  let suppressTraceHint = false
+  const visibleLines: string[] = []
+
+  for (const line of lines) {
+    const isMimoCompatibilityWarning =
+      line.includes('AI SDK Warning') &&
+      line.includes('specificationVersion7') &&
+      line.includes('compatibility mode')
+
+    if (isMimoCompatibilityWarning) {
+      suppressTraceHint = true
+      continue
+    }
+
+    if (
+      suppressTraceHint &&
+      line.includes('--trace-warnings') &&
+      line.includes('warning was created')
+    ) {
+      suppressTraceHint = false
+      continue
+    }
+
+    suppressTraceHint = false
+    visibleLines.push(line)
+  }
+
+  return visibleLines.join('\n')
+}
+
+/**
  * Shared component for displaying terminal command with output.
  * Used in both the ghost message (pending bash) and message history.
  */
@@ -40,6 +77,7 @@ export const TerminalCommandDisplay = ({
   const theme = useTheme()
   const { separatorWidth } = useTerminalDimensions()
   const [isExpanded, setIsExpanded] = useState(false)
+  const visibleOutput = output ? filterNonActionableTerminalWarnings(output) : null
 
   // Default max lines depends on whether expandable
   const defaultMaxLines = expandable ? 5 : 10
@@ -68,7 +106,7 @@ export const TerminalCommandDisplay = ({
   )
 
   // No output case
-  if (!output) {
+  if (!visibleOutput) {
     return (
       <box style={{ flexDirection: 'column', gap: 0, width: '100%' }}>
         {commandHeader}
@@ -80,7 +118,7 @@ export const TerminalCommandDisplay = ({
 
   // With output - calculate visual lines
   const width = Math.max(10, availableWidth ?? separatorWidth)
-  const allLines = output.split('\n')
+  const allLines = visibleOutput.split('\n')
 
   // Calculate total visual lines across all output lines
   let totalVisualLines = 0
@@ -98,7 +136,7 @@ export const TerminalCommandDisplay = ({
   // Build display output
   let displayOutput: string
   if (isExpanded || !hasMoreLines) {
-    displayOutput = output
+    displayOutput = visibleOutput
   } else {
     // Take first N visual lines
     const displayLines: string[] = []

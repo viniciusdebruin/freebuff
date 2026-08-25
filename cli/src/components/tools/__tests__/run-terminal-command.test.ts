@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 
 import { parseTerminalOutput, RunTerminalCommandComponent } from '../run-terminal-command'
+import { filterNonActionableTerminalWarnings } from '../../terminal-command-display'
 
 import type { ChatTheme } from '../../../types/theme-system'
 import type { ToolBlock } from '../types'
@@ -44,6 +45,28 @@ const createJsonOutput = (stdout: string, stderr = ''): string => {
 }
 
 describe('RunTerminalCommandComponent', () => {
+  describe('terminal warning display', () => {
+    test('hides only the Mimo AI SDK compatibility warning', () => {
+      const output = [
+        'before',
+        '(node:4032) Warning: AI SDK Warning (codebuff / mimo/mimo-v2.5): The feature "specificationVersion7" is used in a compatibility mode. Some features may not be available.',
+        '(Use `freebuff.exe --trace-warnings ...` to show where the warning was created)',
+        'after',
+      ].join('\n')
+
+      expect(filterNonActionableTerminalWarnings(output)).toBe('before\nafter')
+    })
+
+    test('keeps advertisements and unrelated stderr visible', () => {
+      const output = [
+        'Freebuff notice: new models available',
+        'Warning: another command warning',
+      ].join('\n')
+
+      expect(filterNonActionableTerminalWarnings(output)).toBe(output)
+    })
+  })
+
   describe('render', () => {
     test('returns content and collapsedPreview', () => {
       const toolBlock = createToolBlock('ls -la', createJsonOutput('file1\nfile2'))
