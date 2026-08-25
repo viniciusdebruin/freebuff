@@ -1,6 +1,11 @@
 import React, { useMemo } from 'react'
 
-import { LOGO, LOGO_SMALL, SHADOW_CHARS } from '../login/constants'
+import {
+  FREEBUFF_BUILD_LABEL,
+  LOGO,
+  LOGO_SMALL,
+  SHADOW_CHARS,
+} from '../login/constants'
 import { parseLogoLines } from '../login/utils'
 import { IS_FREEBUFF } from '../utils/constants'
 
@@ -13,7 +18,11 @@ interface UseLogoOptions {
    * Optional function to apply styling to each character (e.g., for sheen animation)
    * If not provided, default coloring is applied (white blocks, accent shadows)
    */
-  applySheenToChar?: (char: string, charIndex: number, lineIndex: number) => React.ReactNode
+  applySheenToChar?: (
+    char: string,
+    charIndex: number,
+    lineIndex: number,
+  ) => React.ReactNode
   /**
    * Color to apply to the text variant
    */
@@ -94,6 +103,14 @@ export const useLogo = ({
 
   // Format component for React contexts (login modal, etc.)
   const component = useMemo(() => {
+    const buildLabel = IS_FREEBUFF ? (
+      <text style={{ wrapMode: 'none' }}>
+        <span fg={textColor ?? accentColor}>
+          Version: {FREEBUFF_BUILD_LABEL}
+        </span>
+      </text>
+    ) : null
+
     // Text-only variant for very narrow widths
     if (rawLogoString === 'CODEBUFF' || rawLogoString === 'FREEBUFF') {
       const brandName = IS_FREEBUFF ? 'Freebuff' : 'Codebuff'
@@ -102,20 +119,21 @@ export const useLogo = ({
       // CLI" reads as filler in that already-cramped space.
       const forcedByHeight = maxHeight != null && maxHeight < ASCII_LOGO_LINES
       const displayText =
-        availableWidth < 30 || forcedByHeight
-          ? brandName
-          : `${brandName} CLI`
+        availableWidth < 30 || forcedByHeight ? brandName : `${brandName} CLI`
 
       return (
-        <text style={{ wrapMode: 'none' }}>
-          <b>
-            {textColor ? (
-              <span fg={textColor}>{displayText}</span>
-            ) : (
-              <>{displayText}</>
-            )}
-          </b>
-        </text>
+        <>
+          <text style={{ wrapMode: 'none' }}>
+            <b>
+              {textColor ? (
+                <span fg={textColor}>{displayText}</span>
+              ) : (
+                <>{displayText}</>
+              )}
+            </b>
+          </text>
+          {buildLabel}
+        </>
       )
     }
 
@@ -130,14 +148,26 @@ export const useLogo = ({
       }
       // Block characters use blockColor (white in dark mode, black in light mode)
       if (char === '█') {
-        return <span key={charIndex} fg={blockColor}>{char}</span>
+        return (
+          <span key={charIndex} fg={blockColor}>
+            {char}
+          </span>
+        )
       }
       // Shadow/border characters get accent color
       if (SHADOW_CHARS.has(char)) {
-        return <span key={charIndex} fg={accentColor}>{char}</span>
+        return (
+          <span key={charIndex} fg={accentColor}>
+            {char}
+          </span>
+        )
       }
       // Other characters use accent color
-      return <span key={charIndex} fg={accentColor}>{char}</span>
+      return (
+        <span key={charIndex} fg={accentColor}>
+          {char}
+        </span>
+      )
     }
 
     return (
@@ -153,9 +183,18 @@ export const useLogo = ({
               )}
           </text>
         ))}
+        {buildLabel}
       </>
     )
-  }, [rawLogoString, availableWidth, applySheenToChar, textColor, accentColor, blockColor, maxHeight])
+  }, [
+    rawLogoString,
+    availableWidth,
+    applySheenToChar,
+    textColor,
+    accentColor,
+    blockColor,
+    maxHeight,
+  ])
 
   return { component, textBlock }
 }

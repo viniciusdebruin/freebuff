@@ -12,6 +12,9 @@ const FREEBUFF_WEB_URL = IS_DEV
   : (env.NEXT_PUBLIC_FREEBUFF_APP_URL ?? FREEBUFF_WEB_URL_PROD)
 export const LOGIN_WEBSITE_URL = IS_FREEBUFF ? FREEBUFF_WEB_URL : WEBSITE_URL
 
+/** Visible marker for builds distributed from the personal Freebuff fork. */
+export const FREEBUFF_BUILD_LABEL = 'viniciusdebruin/freebuff'
+
 // Codebuff ASCII Logo - compact version for 80-width terminals
 const LOGO_CODEBUFF = `
   ██████╗ ██████╗ ██████╗ ███████╗██████╗ ██╗   ██╗███████╗███████╗
@@ -51,7 +54,9 @@ const LOGO_SMALL_FREEBUFF = `
 `
 
 export const LOGO = IS_FREEBUFF ? LOGO_FREEBUFF : LOGO_CODEBUFF
-export const LOGO_SMALL = IS_FREEBUFF ? LOGO_SMALL_FREEBUFF : LOGO_SMALL_CODEBUFF
+export const LOGO_SMALL = IS_FREEBUFF
+  ? LOGO_SMALL_FREEBUFF
+  : LOGO_SMALL_CODEBUFF
 
 // Shadow/border characters that receive the sheen animation effect
 export const SHADOW_CHARS = new Set([

@@ -533,7 +533,7 @@ export const FreebuffLandingScreen: React.FC<FreebuffLandingScreenProps> = ({
   const wrappedRows = (text: string) =>
     Math.max(1, Math.ceil(text.length / contentMaxWidth))
   const logoBlockRows = showFullLogo
-    ? 8 /* 6 logo lines + marginBottom + gap */
+    ? 9 /* 6 logo lines + version line + marginBottom + gap */
     : 0
   const adRows = showAds ? AD_CARD_HEIGHT : 0
   // Status lines render below the picker, each with marginTop 1: the
