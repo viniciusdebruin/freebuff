@@ -65,22 +65,82 @@ export type ClientInput = {
 }
 export type ClientEnv = z.infer<typeof clientEnvSchema>
 
+/**
+ * A compiled CLI must be able to start without inheriting the web application's
+ * build environment. These values are public build configuration only; they
+ * are not credentials and do not replace the API key used for authentication.
+ */
+const CLI_PUBLIC_ENV_DEFAULTS: Partial<Record<ClientEnvVar, string>> = {
+  NEXT_PUBLIC_CB_ENVIRONMENT: 'prod',
+  NEXT_PUBLIC_CODEBUFF_APP_URL: 'https://www.codebuff.com',
+  NEXT_PUBLIC_FREEBUFF_APP_URL: 'https://freebuff.com',
+  NEXT_PUBLIC_SUPPORT_EMAIL: 'support@codebuff.com',
+  NEXT_PUBLIC_POSTHOG_API_KEY: 'phc_public_placeholder',
+  NEXT_PUBLIC_POSTHOG_HOST_URL: 'https://us.i.posthog.com',
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_placeholder',
+  NEXT_PUBLIC_STRIPE_CUSTOMER_PORTAL:
+    'https://billing.stripe.com/p/login/test',
+  NEXT_PUBLIC_WEB_PORT: '3000',
+}
+
+const isCliRuntime = (): boolean =>
+  process.env.CODEBUFF_IS_BINARY === 'true' ||
+  process.env.FREEBUFF_MODE === 'true'
+
+/**
+ * Keep the web validation strict while allowing the standalone CLI/Freebuff
+ * binary to boot when it was launched outside the install script.
+ */
+export const getClientEnvValue = (
+  value: string | undefined,
+  key: ClientEnvVar,
+): string | undefined => {
+  if (value !== undefined && value.trim().length > 0) return value
+  if (isCliRuntime()) return CLI_PUBLIC_ENV_DEFAULTS[key]
+  return value
+}
+
 // Bun will inject all these values, so we need to reference them individually (no for-loops)
 export const clientProcessEnv: ClientInput = {
-  NEXT_PUBLIC_CB_ENVIRONMENT: process.env.NEXT_PUBLIC_CB_ENVIRONMENT,
-  NEXT_PUBLIC_CODEBUFF_APP_URL: process.env.NEXT_PUBLIC_CODEBUFF_APP_URL,
-  NEXT_PUBLIC_FREEBUFF_APP_URL: process.env.NEXT_PUBLIC_FREEBUFF_APP_URL,
-  NEXT_PUBLIC_SUPPORT_EMAIL: process.env.NEXT_PUBLIC_SUPPORT_EMAIL,
-  NEXT_PUBLIC_POSTHOG_API_KEY: process.env.NEXT_PUBLIC_POSTHOG_API_KEY,
-  NEXT_PUBLIC_POSTHOG_HOST_URL: process.env.NEXT_PUBLIC_POSTHOG_HOST_URL,
+  NEXT_PUBLIC_CB_ENVIRONMENT: getClientEnvValue(
+    process.env.NEXT_PUBLIC_CB_ENVIRONMENT,
+    'NEXT_PUBLIC_CB_ENVIRONMENT',
+  ),
+  NEXT_PUBLIC_CODEBUFF_APP_URL: getClientEnvValue(
+    process.env.NEXT_PUBLIC_CODEBUFF_APP_URL,
+    'NEXT_PUBLIC_CODEBUFF_APP_URL',
+  ),
+  NEXT_PUBLIC_FREEBUFF_APP_URL: getClientEnvValue(
+    process.env.NEXT_PUBLIC_FREEBUFF_APP_URL,
+    'NEXT_PUBLIC_FREEBUFF_APP_URL',
+  ),
+  NEXT_PUBLIC_SUPPORT_EMAIL: getClientEnvValue(
+    process.env.NEXT_PUBLIC_SUPPORT_EMAIL,
+    'NEXT_PUBLIC_SUPPORT_EMAIL',
+  ),
+  NEXT_PUBLIC_POSTHOG_API_KEY: getClientEnvValue(
+    process.env.NEXT_PUBLIC_POSTHOG_API_KEY,
+    'NEXT_PUBLIC_POSTHOG_API_KEY',
+  ),
+  NEXT_PUBLIC_POSTHOG_HOST_URL: getClientEnvValue(
+    process.env.NEXT_PUBLIC_POSTHOG_HOST_URL,
+    'NEXT_PUBLIC_POSTHOG_HOST_URL',
+  ),
   NEXT_PUBLIC_GRAVITY_PIXEL_ID: process.env.NEXT_PUBLIC_GRAVITY_PIXEL_ID,
-  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY:
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: getClientEnvValue(
     process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY,
-  NEXT_PUBLIC_STRIPE_CUSTOMER_PORTAL:
+    'NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY',
+  ),
+  NEXT_PUBLIC_STRIPE_CUSTOMER_PORTAL: getClientEnvValue(
     process.env.NEXT_PUBLIC_STRIPE_CUSTOMER_PORTAL,
+    'NEXT_PUBLIC_STRIPE_CUSTOMER_PORTAL',
+  ),
   NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION_ID:
     process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION_ID,
-  NEXT_PUBLIC_WEB_PORT: process.env.NEXT_PUBLIC_WEB_PORT,
+  NEXT_PUBLIC_WEB_PORT: getClientEnvValue(
+    process.env.NEXT_PUBLIC_WEB_PORT,
+    'NEXT_PUBLIC_WEB_PORT',
+  ),
   NEXT_PUBLIC_TURNSTILE_SITE_KEY: process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY,
   NEXT_PUBLIC_RECAPTCHA_V2_SITE_KEY:
     process.env.NEXT_PUBLIC_RECAPTCHA_V2_SITE_KEY,

@@ -120,6 +120,19 @@ function getCliTargetLabel(targetInfo: TargetInfo): string {
     : baseTarget
 }
 
+const FREEBUFF_PUBLIC_ENV_DEFAULTS: Record<string, string> = {
+  NEXT_PUBLIC_CB_ENVIRONMENT: 'prod',
+  NEXT_PUBLIC_CODEBUFF_APP_URL: 'https://www.codebuff.com',
+  NEXT_PUBLIC_FREEBUFF_APP_URL: 'https://freebuff.com',
+  NEXT_PUBLIC_SUPPORT_EMAIL: 'support@codebuff.com',
+  NEXT_PUBLIC_POSTHOG_API_KEY: 'phc_public_placeholder',
+  NEXT_PUBLIC_POSTHOG_HOST_URL: 'https://us.i.posthog.com',
+  NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: 'pk_test_placeholder',
+  NEXT_PUBLIC_STRIPE_CUSTOMER_PORTAL:
+    'https://billing.stripe.com/p/login/test',
+  NEXT_PUBLIC_WEB_PORT: '3000',
+}
+
 async function main() {
   const [, , binaryNameArg, version] = process.argv
   const binaryName = binaryNameArg ?? 'codecane'
@@ -157,10 +170,23 @@ async function main() {
     targetInfo.platform === 'win32' ? `${binaryName}.exe` : binaryName
   const outputFile = join(binDir, outputFilename)
 
-  // Collect all NEXT_PUBLIC_* environment variables
-  const nextPublicEnvVars = Object.entries(process.env)
-    .filter(([key]) => key.startsWith('NEXT_PUBLIC_'))
-    .map(([key, value]) => [`process.env.${key}`, `"${value ?? ''}"`])
+  // A Freebuff binary must remain self-contained when launched directly from
+  // PowerShell or a desktop shortcut, without the install script's environment.
+  // These are public configuration values, never credentials.
+  const nextPublicEnvValues = new Map<string, string>()
+  if (binaryName === 'freebuff' || process.env.FREEBUFF_MODE === 'true') {
+    for (const [key, value] of Object.entries(FREEBUFF_PUBLIC_ENV_DEFAULTS)) {
+      nextPublicEnvValues.set(key, value)
+    }
+  }
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key.startsWith('NEXT_PUBLIC_') && value !== undefined) {
+      nextPublicEnvValues.set(key, value)
+    }
+  }
+  const nextPublicEnvVars = Array.from(nextPublicEnvValues.entries()).map(
+    ([key, value]) => [`process.env.${key}`, JSON.stringify(value)],
+  )
 
   const defineFlags = [
     ['process.env.NODE_ENV', '"production"'],

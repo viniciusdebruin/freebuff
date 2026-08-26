@@ -1,6 +1,26 @@
-import { describe, expect, it } from 'bun:test'
+import { describe, expect, it, test } from 'bun:test'
 
-import { pluralize } from '../string'
+import { pluralize, stripAnsi, stripColors } from '../string'
+
+describe('terminal escape stripping', () => {
+  test('strips real and escaped color sequences', () => {
+    const escape = String.fromCharCode(27)
+    const real = `${escape}[38;5;108;48;5;49mcolored${escape}[0m`
+    const escaped = String.raw`\x1b[38;5;108;48;5;49mcolored\x1b[0m`
+
+    expect(stripColors(real)).toBe('colored')
+    expect(stripColors(escaped)).toBe('colored')
+    expect(stripAnsi(real)).toBe('colored')
+    expect(stripAnsi(escaped)).toBe('colored')
+  })
+
+  test('strips the doubled-bracket form emitted by some Windows adapters', () => {
+    const output = 'before [[38;5;108;48;5;49mcolored[[0mafter'
+
+    expect(stripAnsi(output)).toBe('before coloredafter')
+    expect(stripColors(output)).toBe('before coloredafter')
+  })
+})
 
 describe('pluralize', () => {
   it('should handle singular and plural cases correctly', () => {

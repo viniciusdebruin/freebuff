@@ -374,13 +374,25 @@ export const stripNullChars = (str: string): string => {
 }
 
 const ansiColorsRegex = /\x1B\[[0-9;]*m/g
+const escapedAnsiColorsRegex = /(?:\\x1B|\\u001B|\\e|\\033)\[[0-9;]*m/gi
+// Some Windows/PowerShell adapters lose the ESC byte and leave a doubled
+// opening bracket. Treat only an SGR-shaped sequence as control data.
+const malformedAnsiColorsRegex = /\[\[[0-9;]*m/g
 export function stripColors(str: string): string {
-  return str.replace(ansiColorsRegex, '')
+  return str
+    .replace(ansiColorsRegex, '')
+    .replace(escapedAnsiColorsRegex, '')
+    .replace(malformedAnsiColorsRegex, '')
 }
 
 const ansiRegex = /\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\][^\x1B]*\x1B\\?)/g
+const escapedAnsiRegex = /(?:\\x1B|\\u001B|\\e|\\033)\[[0-?]*[ -/]*[@-~]/gi
+const malformedAnsiRegex = /\[\[[0-?]*[ -/]*[@-~]/g
 export function stripAnsi(str: string): string {
-  return str.replace(ansiRegex, '')
+  return str
+    .replace(ansiRegex, '')
+    .replace(escapedAnsiRegex, '')
+    .replace(malformedAnsiRegex, '')
 }
 
 export function includesMatch(

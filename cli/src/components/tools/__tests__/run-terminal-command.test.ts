@@ -46,6 +46,14 @@ const createJsonOutput = (stdout: string, stderr = ''): string => {
 
 describe('RunTerminalCommandComponent', () => {
   describe('terminal warning display', () => {
+    test('removes ANSI residue before filtering warnings', () => {
+      const output = 'before [[38;5;108;48;5;49mcolored[[0mafter'
+
+      expect(filterNonActionableTerminalWarnings(output)).toBe(
+        'before coloredafter',
+      )
+    })
+
     test('hides only the Mimo AI SDK compatibility warning', () => {
       const output = [
         'before',

@@ -1,6 +1,7 @@
 import { TextAttributes } from '@opentui/core'
 import { useState } from 'react'
 
+import { stripAnsi } from '@codebuff/common/util/string'
 import { Button } from './button'
 import { useTerminalDimensions } from '../hooks/use-terminal-dimensions'
 import { useTheme } from '../hooks/use-theme'
@@ -30,7 +31,10 @@ interface TerminalCommandDisplayProps {
  * remains visible to the user.
  */
 export const filterNonActionableTerminalWarnings = (output: string): string => {
-  const lines = output.split(/\r?\n/)
+  // Terminal output can arrive through a streaming preview before the SDK
+  // buffer has normalized it. Sanitize here as the final UI boundary so raw
+  // control sequences never become visible text.
+  const lines = stripAnsi(output).split(/\r?\n/)
   let suppressTraceHint = false
   const visibleLines: string[] = []
 
