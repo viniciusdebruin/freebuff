@@ -145,7 +145,9 @@ export const SessionEndedBanner: React.FC<SessionEndedBannerProps> = ({
     }
     // Re-POST with the currently selected model and keep the chat/run state
     // intact so the next prompt continues the same conversation.
-    refreshFreebuffSession().catch(() => setPendingAction(null))
+    refreshFreebuffSession({ recoverRun: true }).catch(() =>
+      setPendingAction(null),
+    )
   }, [canRestart, continueOnFallback])
 
   useEffect(() => {

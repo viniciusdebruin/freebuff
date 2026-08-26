@@ -137,6 +137,15 @@ export const ChatRuntimeProvider = ({
     { sendBlocked },
   )
 
+  const recoverFromSessionRejoin = useCallback(() => {
+    queue.recoverFromSessionRejoin()
+    // A session can expire after the run owner has already been released.
+    // Clear the chain guard as well, otherwise the preserved queue remains
+    // blocked forever even though the stream and processing lock are idle.
+    isChainInProgressRef.current = false
+    useChatStore.getState().setIsChainInProgress(false)
+  }, [queue.recoverFromSessionRejoin, isChainInProgressRef])
+
   // The module-level stop entry point keeps this callback for the runtime's
   // lifetime. Read controls through a ref so cancellation always uses the
   // latest queue rather than the render that installed the handler.
@@ -144,6 +153,7 @@ export const ChatRuntimeProvider = ({
     pauseQueueIfPending: queue.pauseQueueIfPending,
     discardQueue: queue.discardQueue,
     setCanProcessQueue: queue.setCanProcessQueue,
+    recoverFromSessionRejoin,
   }
   const queueControlRef = useRef(queueControls)
   queueControlRef.current = queueControls

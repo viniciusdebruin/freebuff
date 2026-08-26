@@ -186,6 +186,8 @@ function toLandingSession(
 
 interface RestartOpts {
   resetChat?: boolean
+  /** Abort stale stream/queue state while keeping the current chat intact. */
+  recoverRun?: boolean
   /** DELETE the held slot before restarting so the next POST starts clean. */
   releaseSlot?: boolean
 }
@@ -200,6 +202,8 @@ async function restartFreebuffSession(
   if (opts.resetChat) {
     stopActiveRun('session-transition')
     useChatStore.getState().reset()
+  } else if (opts.recoverRun) {
+    stopActiveRun('session-rejoin')
   }
   // Halt the running poll loop before we touch local stores or DELETE the
   // slot. Otherwise an in-flight GET could land mid-reset and overwrite
@@ -217,9 +221,12 @@ async function restartFreebuffSession(
  * rejoining after a session ended so the next admitted session starts fresh.
  */
 export function refreshFreebuffSession(
-  opts: { resetChat?: boolean } = {},
+  opts: { resetChat?: boolean; recoverRun?: boolean } = {},
 ): Promise<void> {
-  return restartFreebuffSession('rejoin', { resetChat: opts.resetChat })
+  return restartFreebuffSession('rejoin', {
+    resetChat: opts.resetChat,
+    recoverRun: opts.recoverRun,
+  })
 }
 
 /**

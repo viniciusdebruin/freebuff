@@ -5,12 +5,14 @@ export type ActiveRunStopReason =
   | 'new-chat'
   | 'history-resume'
   | 'session-transition'
+  | 'session-rejoin'
   | 'process-exit'
 
 type ActiveRunQueuePolicy =
   | 'pause-if-pending'
   | 'clear-and-block'
   | 'preserve-and-block'
+  | 'preserve-and-recover'
 
 /**
  * Every reason aborts through the same run owner, which marks the message
@@ -25,6 +27,7 @@ export const ACTIVE_RUN_QUEUE_POLICIES = {
   'new-chat': 'clear-and-block',
   'history-resume': 'clear-and-block',
   'session-transition': 'clear-and-block',
+  'session-rejoin': 'preserve-and-recover',
   'process-exit': 'preserve-and-block',
 } satisfies Record<ActiveRunStopReason, ActiveRunQueuePolicy>
 
@@ -32,6 +35,7 @@ export type ActiveRunQueueControls = {
   pauseQueueIfPending: () => void
   discardQueue: () => void
   setCanProcessQueue: (canProcess: boolean) => void
+  recoverFromSessionRejoin: () => void
 }
 
 /** Apply the reason matrix to the persistent runtime's latest queue state. */
@@ -53,6 +57,12 @@ export function applyActiveRunQueuePolicy(
     // queued prompts in memory, but do not let abort cleanup dequeue a new run
     // during that window.
     controls.setCanProcessQueue(false)
+    return
+  }
+  if (policy === 'preserve-and-recover') {
+    // A session rejoin must keep pending prompts while releasing stale stream
+    // state; the queue will remain held until the session becomes active again.
+    controls.recoverFromSessionRejoin()
   }
 }
 

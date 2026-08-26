@@ -356,6 +356,19 @@ export const useMessageQueue = (
     setCanProcessQueue(false)
   }, [writeQueue])
 
+  /** Recover a queue after the Freebuff seat is rejoined without discarding
+   * pending prompts or changing a pause explicitly chosen by the user. */
+  const recoverFromSessionRejoin = useCallback(() => {
+    clearStreaming()
+    queueProcessingOwnerRef.current = null
+    isProcessingQueueRef.current = false
+    if (watchdogTimeoutRef.current) {
+      clearTimeout(watchdogTimeoutRef.current)
+      watchdogTimeoutRef.current = null
+    }
+    setCanProcessQueue(!isQueuePausedRef.current)
+  }, [clearStreaming])
+
   const startStreaming = useCallback(() => {
     setStreamStatus('streaming')
     setCanProcessQueue(false)
@@ -381,6 +394,7 @@ export const useMessageQueue = (
     resumeQueue,
     clearQueue,
     discardQueue,
+    recoverFromSessionRejoin,
     isQueuePausedRef,
     isProcessingQueueRef,
   }

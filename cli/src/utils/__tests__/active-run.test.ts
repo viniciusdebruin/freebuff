@@ -16,6 +16,7 @@ const ALL_REASONS: ActiveRunStopReason[] = [
   'new-chat',
   'history-resume',
   'session-transition',
+  'session-rejoin',
   'process-exit',
 ]
 
@@ -114,6 +115,7 @@ describe('active run stop policies', () => {
       discardQueue: () => calls.push('discard'),
       setCanProcessQueue: (canProcess) =>
         calls.push(`can-process:${canProcess}`),
+      recoverFromSessionRejoin: () => calls.push('recover-session-rejoin'),
     })
     return calls
   }
@@ -136,5 +138,14 @@ describe('active run stop policies', () => {
   it('preserves and blocks the in-memory queue on exit', () => {
     expect(ACTIVE_RUN_QUEUE_POLICIES['process-exit']).toBe('preserve-and-block')
     expect(applyQueuePolicy('process-exit')).toEqual(['can-process:false'])
+  })
+
+  it('preserves the queue and recovers stale stream state on session rejoin', () => {
+    expect(ACTIVE_RUN_QUEUE_POLICIES['session-rejoin']).toBe(
+      'preserve-and-recover',
+    )
+    expect(applyQueuePolicy('session-rejoin')).toEqual([
+      'recover-session-rejoin',
+    ])
   })
 })
